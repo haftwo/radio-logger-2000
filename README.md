@@ -5,6 +5,8 @@ Records internet radio streams to disk in clock-aligned chunks and gives you a w
 ## What's in the box
 
 - **Dashboard** – pick a station (with its logo) and a date, click anywhere on the 24-hour timeline to start playback, scrub the waveform, step chunk to chunk (playback rolls on to the next chunk and the next day automatically), download a chunk, or hit **Listen live**. Jump straight to a moment with the date + time box and **Go**, or deep-link with `/?stream=1&date=2026-11-01&time=08:30:00`. Zoom the waveform with the mouse wheel, the +/− buttons or keys (0 = fit), drag to pan, click to seek. Keyboard: space = play/pause, ←/→ = 10 s.
+- **Song tags** – every detected song is tagged automatically with artist, title, album, genre and year (from Shazam and the iTunes catalogue) and shown as a coloured block on the timeline and a labelled band on the waveform. Fix a wrong match or add a missed song with **Edit** / **+ Tag song at playhead**; corrected songs get fresh artwork and tags.
+- **Station details** – the station name, genre and description the stream announces (ICY headers, or the HLS/TS service name) are picked up automatically; leave the name blank when adding a stream, or use **Detect from stream**.
 - **Music stations** – show the cover art and track for whatever moment you're replaying, plus a "Played on this day" list you can click to jump to a song. Track changes are marked on the timeline and waveform.
 - **Admin** (admin role only)
   - *Streams*: add/edit/delete, enable/disable, restart a recorder, upload a station logo (click the logo), see the recorder log.

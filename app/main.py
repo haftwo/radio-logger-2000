@@ -14,7 +14,9 @@ from PIL import Image
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import audio, auth, db
+from urllib.parse import urlparse
+
+from . import audio, auth, db, metadata
 from .recorder import check_writable, manager
 
 logging.basicConfig(level=os.environ.get("RL_LOG_LEVEL", "INFO"),
@@ -105,6 +107,8 @@ def stream_out(s: dict) -> dict:
         "is_music": bool(s["is_music"]), "meta_source": s["meta_source"],
         "logo": f"/logos/{s['logo_file']}" if s["logo_file"] else None,
         "status": manager.status(s["id"])["state"] if s["enabled"] else "disabled",
+        "station": {"name": s.get("icy_name"), "genre": s.get("icy_genre"),
+                    "description": s.get("icy_description"), "url": s.get("icy_url")},
     }
 
 
@@ -150,7 +154,8 @@ def stream_day(stream_id: int, date: str, user=Depends(auth.require_user)):
 @app.get("/api/streams/{stream_id}/nowplaying")
 def now_playing(stream_id: int, user=Depends(auth.require_user)):
     get_stream_or_404(stream_id)
-    return db.last_track(stream_id) or {}
+    t = db.last_track(stream_id)
+    return db.track_out(t) if t else {}
 
 
 @app.get("/api/streams/{stream_id}/audio/{date}/{name}")
@@ -227,7 +232,7 @@ class SettingsIn(BaseModel):
 
 
 class StreamIn(BaseModel):
-    name: str = Field(min_length=1, max_length=80)
+    name: str = Field(default="", max_length=80)
     url: str = Field(min_length=4)
     enabled: bool = True
     is_music: bool = False
@@ -276,6 +281,9 @@ def admin_streams(user=Depends(auth.require_admin)):
 
 @app.post("/api/admin/streams")
 async def create_stream(body: StreamIn, user=Depends(auth.require_admin)):
+    if not body.name.strip():  # no name given: ask the stream, else use the host name
+        info = await metadata.probe_station(body.url.strip())
+        body.name = (info.get("name") or urlparse(body.url).hostname or "Stream")[:80]
     sid = db.ex("INSERT INTO streams(name, slug, url, enabled, is_music, meta_source, created_at) "
                 "VALUES (?,?,?,?,?,?,?)",
                 (body.name.strip(), db.slugify(body.name), body.url.strip(), int(body.enabled),
@@ -286,12 +294,22 @@ async def create_stream(body: StreamIn, user=Depends(auth.require_admin)):
 
 @app.put("/api/admin/streams/{stream_id}")
 async def update_stream(stream_id: int, body: StreamIn, user=Depends(auth.require_admin)):
-    get_stream_or_404(stream_id)
+    old = get_stream_or_404(stream_id)
+    if not body.name.strip():
+        body.name = old["name"]
     db.ex("UPDATE streams SET name=?, url=?, enabled=?, is_music=?, meta_source=? WHERE id=?",
           (body.name.strip(), body.url.strip(), int(body.enabled), int(body.is_music),
            body.meta_source, stream_id))
     await manager.restart_stream(stream_id)
     return {"ok": True}
+
+
+@app.get("/api/admin/probe")
+async def probe(url: str, user=Depends(auth.require_admin)):
+    """Read the station name/genre/description a stream announces, to pre-fill the Add stream form."""
+    if not url.strip():
+        raise HTTPException(400, "url required")
+    return await metadata.probe_station(url.strip())
 
 
 @app.post("/api/admin/streams/{stream_id}/restart")
@@ -386,4 +404,57 @@ def delete_user(uid: int, user=Depends(auth.require_admin)):
     if target["role"] == "admin" and admin_count() <= 1:
         raise HTTPException(400, "There must be at least one admin")
     db.ex("DELETE FROM users WHERE id=?", (uid,))
+    return {"ok": True}
+
+
+# ---- song tags (any signed-in user can correct or add them) ------------------------
+
+class TrackIn(BaseModel):
+    artist: str = Field(default="", max_length=200)
+    title: str = Field(min_length=1, max_length=200)
+    album: str | None = Field(default=None, max_length=200)
+    tags: list[str] = []
+    ts: float | None = None
+    lookup: bool = True
+
+
+@app.post("/api/streams/{stream_id}/tracks")
+async def add_track(stream_id: int, body: TrackIn, user=Depends(auth.require_user)):
+    get_stream_or_404(stream_id)
+    if body.ts is None:
+        raise HTTPException(400, "ts required")
+    info = await metadata.itunes_lookup(body.artist, body.title) if body.lookup else {}
+    tags = list(body.tags)
+    if info.get("genre") and info["genre"].lower() not in (t.lower() for t in tags):
+        tags.insert(0, info["genre"])
+    if info.get("year") and info["year"] not in tags:
+        tags.append(info["year"])
+    tid = db.add_track(stream_id, body.artist.strip(), body.title.strip(), body.album or info.get("album"),
+                       info.get("artwork"), f"{body.artist} - {body.title}", body.ts, tags,
+                       info.get("duration"), source=f"manual:{user['username']}")
+    return db.track_out(db.q1("SELECT * FROM tracks WHERE id=?", (tid,)))
+
+
+@app.put("/api/tracks/{track_id}")
+async def edit_track(track_id: int, body: TrackIn, user=Depends(auth.require_user)):
+    t = db.q1("SELECT * FROM tracks WHERE id=?", (track_id,))
+    if not t:
+        raise HTTPException(404)
+    changed_song = (body.artist.strip().lower(), body.title.strip().lower()) != \
+        ((t["artist"] or "").lower(), (t["title"] or "").lower())
+    art, album, dur = t["artwork_url"], body.album if body.album is not None else t["album"], t["duration"]
+    if changed_song and body.lookup:  # a corrected match gets fresh artwork and details
+        info = await metadata.itunes_lookup(body.artist, body.title)
+        art, dur = info.get("artwork"), info.get("duration")
+        album = body.album or info.get("album")
+    db.ex("UPDATE tracks SET artist=?, title=?, album=?, tags=?, artwork_url=?, duration=?, ts=COALESCE(?, ts), "
+          "source=? WHERE id=?",
+          (body.artist.strip(), body.title.strip(), album, db.join_tags(body.tags), art, dur, body.ts,
+           f"edited:{user['username']}" if changed_song else t["source"], track_id))
+    return db.track_out(db.q1("SELECT * FROM tracks WHERE id=?", (track_id,)))
+
+
+@app.delete("/api/tracks/{track_id}")
+def delete_track(track_id: int, user=Depends(auth.require_user)):
+    db.ex("DELETE FROM tracks WHERE id=?", (track_id,))
     return {"ok": True}

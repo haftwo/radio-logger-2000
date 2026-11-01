@@ -100,8 +100,12 @@
 <dialog id="streamDlg">
   <form method="dialog" id="streamForm">
     <h3 id="streamDlgTitle">Add stream</h3>
-    <label class="field"><span>Station name</span><input type="text" name="name" required maxlength="80"></label>
     <label class="field"><span>Stream URL</span><input type="text" name="url" required placeholder="https://… (.mp3, .aac, Icecast, or HLS .m3u8)"></label>
+    <label class="field"><span>Station name</span>
+      <div style="display:flex;gap:8px"><input type="text" name="name" maxlength="80" placeholder="Leave blank to use the name the stream announces">
+      <button class="btn" type="button" id="detectBtn" style="white-space:nowrap">Detect from stream</button></div>
+      <div class="hint" id="detectInfo"></div>
+    </label>
     <label class="check"><input type="checkbox" name="enabled" checked> Recording enabled</label>
     <label class="check"><input type="checkbox" name="is_music"> Music station (log tracks and show artwork)</label>
     <label class="field" id="metaField"><span>Track detection</span>

@@ -41,6 +41,16 @@
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const initials = (n) => n.split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
   const logoHtml = (s, cls = '') => s.logo ? `<img src="${esc(s.logo)}" alt="" class="${cls}">` : `<div class="ph ${cls}">${esc(initials(s.name))}</div>`;
+  const hueOf = (str) => { let h = 0; for (const ch of str || '') h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h % 360; };
+  const songColor = (t, a = 1) => `hsla(${hueOf((t.artist || '') + (t.title || ''))}, 65%, 58%, ${a})`;
+  // a song lasts until the next one starts, or for its known length, whichever is sooner
+  function songEnd(i) {
+    const tr = S.day.tracks, t = tr[i], next = tr[i + 1] ? tr[i + 1].ts : Infinity;
+    const byLen = t.duration ? t.ts + t.duration + 5 : t.ts + 600;
+    return Math.min(next, byLen, Math.max(S.day.now, t.ts + 30));
+  }
+  const chipsHtml = (t, withSrc) => (t.tags || []).map((g) => `<span class="chip ${/^\d{4}$/.test(g) ? 'year' : ''}">${esc(g)}</span>`).join('')
+    + (withSrc && t.source && t.source !== 'icy' && t.source !== 'shazam' ? `<span class="chip src">${esc(t.source.split(':')[0])}</span>` : '');
   const chunkLen = (c) => c.in_progress ? Math.max(c.duration, S.day.now - c.start) : c.duration;
 
   // ---------- boot ----------
@@ -79,10 +89,20 @@
     renderStations();
     $('stLogo').innerHTML = logoHtml(s);
     $('stName').textContent = s.name;
+    renderStationInfo(s);
     setStatusPill(s.status);
     $('np').classList.toggle('show', s.is_music);
     $('tracksPanel').hidden = !s.is_music;
     await loadDay(S.date);
+  }
+
+  function renderStationInfo(s) {
+    const st = s.station || {}, bits = [];
+    if (st.name && st.name.toLowerCase() !== s.name.toLowerCase()) bits.push(`On air as <b>${esc(st.name)}</b>`);
+    if (st.genre) bits.push(esc(st.genre));
+    if (st.description && st.description !== st.name) bits.push(esc(st.description));
+    $('stInfo').innerHTML = bits.join(' · ');
+    $('stInfo').hidden = !bits.length;
   }
 
   function setStatusPill(state) {
@@ -108,7 +128,7 @@
 
   function renderTimeline() {
     const tl = $('timeline'), d = S.day, span = d.day_end - d.day_start;
-    tl.querySelectorAll('.chunk,.tick,.trk').forEach((e) => e.remove());
+    tl.querySelectorAll('.chunk,.tick,.trk,.song').forEach((e) => e.remove());
     const pct = (ts) => ((ts - d.day_start) / span) * 100;
     const frag = document.createDocumentFragment();
     for (let h = 0; h < 24; h += 3) {
@@ -122,8 +142,13 @@
       e.title = `${fmtHM(c.start)} – ${fmtHM(c.start + chunkLen(c))}`;
       frag.appendChild(e);
     });
-    d.tracks.forEach((t) => {
-      const e = document.createElement('div'); e.className = 'trk'; e.style.left = pct(t.ts) + '%';
+    d.tracks.forEach((t, i) => {
+      const e = document.createElement('div'); e.className = 'song';
+      e.style.left = pct(t.ts) + '%';
+      e.style.width = Math.max(0.12, ((songEnd(i) - t.ts) / span) * 100) + '%';
+      e.style.background = songColor(t);
+      e.title = `${fmtHM(t.ts)}  ${t.artist ? t.artist + ' – ' : ''}${t.title}${t.tags && t.tags.length ? '  [' + t.tags.join(', ') + ']' : ''}`;
+      e.addEventListener('click', (ev) => { ev.stopPropagation(); playAt(t.ts); });
       frag.appendChild(e);
     });
     tl.appendChild(frag);
@@ -137,16 +162,21 @@
       `<div class="trow" data-ts="${t.ts}" data-id="${t.id}">
          <div class="tm">${fmtHM(t.ts)}</div>
          <div class="th" style="${t.artwork_url ? `background-image:url('${esc(t.artwork_url)}')` : ''}"></div>
-         <div><div class="tt">${esc(t.title)}</div><div class="ta">${esc(t.artist)}${t.album ? ' · ' + esc(t.album) : ''}</div></div>
+         <div><div class="tt">${esc(t.title)}</div><div class="ta">${esc(t.artist)}${t.album ? ' · ' + esc(t.album) : ''}</div>
+           <div class="chips">${chipsHtml(t, true)}</div></div>
+         <button class="btn sm edit" data-edit="${t.id}" title="Edit tags">Edit</button>
        </div>`).join('');
-    list.querySelectorAll('.trow').forEach((r) => r.addEventListener('click', () => playAt(Number(r.dataset.ts) - 2)));
+    list.querySelectorAll('.trow').forEach((r) => r.addEventListener('click', (e) => {
+      if (e.target.closest('[data-edit]')) return openTrack(S.day.tracks.find((t) => t.id === Number(r.dataset.id)));
+      playAt(Number(r.dataset.ts) - 2);
+    }));
   }
 
   async function refreshTick() {
     try {
       S.streams = await api('/api/streams');
       const s = S.streams.find((x) => x.id === S.stream.id);
-      if (s) setStatusPill(s.status);
+      if (s) { setStatusPill(s.status); renderStationInfo(s); }
       renderStations();
       if (S.date === today()) await loadDay(S.date, true);
       if (S.mode === 'live' && S.stream.is_music) await refreshLiveTrack();
@@ -323,16 +353,21 @@
         g.fillText(step < 60 ? fmtTime(t) : fmtHM(t), x + 3, h - 4);
       }
     }
-    // track change markers
+    // song tag bands: colour block + "Artist – Title" + tags
     if (c && S.stream.is_music) {
-      g.fillStyle = '#ffb547'; g.font = '11px ui-monospace, monospace';
-      S.day.tracks.forEach((t) => {
-        const rel = t.ts - c.start;
-        if (rel >= vs && rel < ve) {
-          const x = xOf(rel); g.fillRect(x, 24, 1, h - 46);
-          g.fillText((t.title || '').slice(0, 28), x + 4, 36);
-        }
+      g.font = '600 11px system-ui, sans-serif'; g.textBaseline = 'middle';
+      S.day.tracks.forEach((t, i) => {
+        const r0 = t.ts - c.start, r1 = songEnd(i) - c.start;
+        if (r1 < vs || r0 > ve) return;
+        const x0 = Math.max(0, xOf(r0)), x1 = Math.min(w, xOf(r1));
+        g.fillStyle = songColor(t, 0.22); g.fillRect(x0, 38, x1 - x0, 20);
+        g.fillStyle = songColor(t, 0.95); g.fillRect(x0, 38, Math.max(2, x1 - x0), 2);
+        if (r0 >= vs) { g.fillRect(xOf(r0), 38, 2, h - 56); }
+        const label = `${t.artist ? t.artist + ' – ' : ''}${t.title}${t.tags && t.tags.length ? '   ' + t.tags.join(' · ') : ''}`;
+        g.save(); g.beginPath(); g.rect(x0, 38, x1 - x0, 20); g.clip();
+        g.fillStyle = '#e8ecf8'; g.fillText(label, x0 + 6, 49); g.restore();
       });
+      g.textBaseline = 'alphabetic';
     }
     if (ct >= vs && ct <= ve) { g.fillStyle = '#fff'; g.fillRect(xOf(ct), 0, 2, h - 16); }
     $('zoomLvl').textContent = (S.zoom < 10 ? S.zoom.toFixed(S.zoom % 1 ? 1 : 0) : Math.round(S.zoom)) + '×';
@@ -380,6 +415,7 @@
     $('npTitle').textContent = t ? t.title : '—';
     $('npArtist').textContent = t ? t.artist : '';
     $('npAlbum').textContent = t && t.album ? t.album : '';
+    $('npTags').innerHTML = t ? chipsHtml(t, false) : '';
     const art = $('npArt');
     art.style.backgroundImage = t && t.artwork_url ? `url('${t.artwork_url.replace(/'/g, '%27')}')` : '';
     art.firstElementChild.style.display = t && t.artwork_url ? 'none' : '';
@@ -446,6 +482,55 @@
   ['zoomIn', 'zoomOut', 'zoomFit'].forEach((id) => $(id).addEventListener('pointerdown', (e) => e.stopPropagation()));
   const setWaveCursor = () => ww.classList.toggle('zoomed', S.zoom > 1);
   setInterval(setWaveCursor, 300);
+
+  // ---------- song tags ----------
+  let editingTrack = null;
+  const hms = (ts) => fmtTime(ts);
+  function openTrack(t) {
+    editingTrack = t || null;
+    const f = $('trackForm');
+    $('trackDlgTitle').textContent = t ? 'Edit song tag' : 'Tag song';
+    f.artist.value = t ? t.artist || '' : ''; f.title.value = t ? t.title || '' : '';
+    f.album.value = t ? t.album || '' : ''; f.tags.value = t ? (t.tags || []).join(', ') : '';
+    const at = t ? t.ts : currentTs();
+    f.time.value = hms(at);
+    $('trackDelete').hidden = !t;
+    $('trackDlg').showModal();
+  }
+  $('tagHere').onclick = () => {
+    if (S.mode !== 'replay' && S.mode !== 'live') return toast('Play something first, then tag the song at that point');
+    if (S.mode === 'live' && S.date !== today()) return toast('Switch to today to tag the live stream');
+    openTrack(null);
+  };
+  $('trackForm').addEventListener('submit', async (e) => {
+    const v = e.submitter && e.submitter.value;
+    if (v === 'cancel') return;
+    e.preventDefault();
+    const f = e.target;
+    try {
+      if (v === 'delete') {
+        if (!confirm('Delete this song tag?')) return;
+        await apiSend(`/api/tracks/${editingTrack.id}`, 'DELETE');
+      } else {
+        const [hh, mm, ss] = f.time.value.split(':').map(Number);
+        const body = { artist: f.artist.value, title: f.title.value, album: f.album.value || null,
+          tags: f.tags.value.split(',').map((x) => x.trim()).filter(Boolean),
+          ts: S.day.day_start + hh * 3600 + mm * 60 + (ss || 0) };
+        if (editingTrack) await apiSend(`/api/tracks/${editingTrack.id}`, 'PUT', body);
+        else await apiSend(`/api/streams/${S.stream.id}/tracks`, 'POST', body);
+      }
+      $('trackDlg').close(); S.npTrackId = undefined;
+      await loadDay(S.date, true);
+      toast(v === 'delete' ? 'Song tag deleted' : 'Song tag saved');
+    } catch (er) { toast(er.message, true); }
+  });
+  async function apiSend(path, method, body) {
+    const r = await fetch(path, { method, credentials: 'same-origin', headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
+    if (r.status === 401) { location.href = '/login'; throw new Error('signed out'); }
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(Array.isArray(data.detail) ? data.detail.map((x) => x.msg).join('; ') : data.detail || r.statusText);
+    return data;
+  }
 
   // ---------- go to date and time ----------
   async function gotoDateTime(date, time) {

@@ -191,3 +191,20 @@ pre.log { background: var(--bg); border: 1px solid var(--line); border-radius: 8
 .btn.icon.sm { width: 28px; height: 28px; font-size: 16px; line-height: 1; }
 .wave-wrap .wavehelp { position: absolute; top: 12px; right: 180px; margin: 0; pointer-events: none; font-size: 11px; }
 @media (max-width: 700px) { .wave-wrap .wavehelp { display: none; } }
+
+/* song tags */
+.station-info { color: var(--muted); font-size: 13px; margin: -4px 0 10px; line-height: 1.4; }
+.station-info b { color: var(--text); font-weight: 600; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.chip { font-size: 11px; padding: 2px 8px; border-radius: 99px; background: #2ec4b622; color: #9ff0e7; border: 1px solid #2ec4b644; white-space: nowrap; }
+.chip.year { background: #5b6cff22; color: #c3c9ff; border-color: #5b6cff44; }
+.chip.src { background: transparent; color: var(--muted); border-color: var(--line); }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+.panel-head h2 { margin: 0; }
+.trow { grid-template-columns: 60px 44px 1fr auto; }
+.trow .edit { opacity: 0; transition: opacity .15s; }
+.trow:hover .edit, .trow.current .edit { opacity: 1; }
+.timeline .song { position: absolute; top: 3px; height: 6px; border-radius: 2px; opacity: .9; }
+.timeline .song:hover { outline: 1px solid #fff; z-index: 2; }
+dialog .cols2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+dialog input[type=time] { width: auto; }

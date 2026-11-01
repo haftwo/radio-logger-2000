@@ -68,6 +68,15 @@ def init() -> None:
             CREATE INDEX IF NOT EXISTS idx_tracks_stream_ts ON tracks(stream_id, ts);
             """
         )
+        # migrations for databases created by earlier versions
+        cols = {r[1] for r in c.execute("PRAGMA table_info(tracks)")}
+        for col, ddl in (("tags", "TEXT"), ("duration", "REAL"), ("source", "TEXT")):
+            if col not in cols:
+                c.execute(f"ALTER TABLE tracks ADD COLUMN {col} {ddl}")
+        cols = {r[1] for r in c.execute("PRAGMA table_info(streams)")}
+        for col in ("icy_name", "icy_genre", "icy_description", "icy_url"):
+            if col not in cols:
+                c.execute(f"ALTER TABLE streams ADD COLUMN {col} TEXT")
         for k, v in DEFAULT_SETTINGS.items():
             c.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (k, v))
         c.commit()
@@ -134,11 +143,31 @@ def last_track(stream_id: int) -> dict | None:
 
 
 def add_track(stream_id: int, artist: str, title: str, album: str | None,
-              artwork_url: str | None, raw: str, ts: float | None = None) -> None:
-    ex("INSERT INTO tracks(stream_id, ts, artist, title, album, artwork_url, raw) VALUES (?,?,?,?,?,?,?)",
-       (stream_id, ts or time.time(), artist, title, album, artwork_url, raw))
+              artwork_url: str | None, raw: str, ts: float | None = None,
+              tags: list[str] | None = None, duration: float | None = None, source: str = "icy") -> int:
+    return ex("INSERT INTO tracks(stream_id, ts, artist, title, album, artwork_url, raw, tags, duration, source) "
+              "VALUES (?,?,?,?,?,?,?,?,?,?)",
+              (stream_id, ts or time.time(), artist, title, album, artwork_url, raw,
+               join_tags(tags), duration, source))
+
+
+def join_tags(tags: list[str] | None) -> str:
+    seen, out = set(), []
+    for t in tags or []:
+        t = str(t).strip()
+        if t and t.lower() not in seen:
+            seen.add(t.lower())
+            out.append(t[:40])
+    return ",".join(out[:12])
+
+
+def track_out(r: dict) -> dict:
+    r = dict(r)
+    r["tags"] = [t for t in (r.get("tags") or "").split(",") if t]
+    return r
 
 
 def tracks_between(stream_id: int, start: float, end: float) -> list[dict]:
-    return q("SELECT id, ts, artist, title, album, artwork_url FROM tracks "
-             "WHERE stream_id=? AND ts>=? AND ts<? ORDER BY ts", (stream_id, start, end))
+    return [track_out(r) for r in q(
+        "SELECT id, ts, artist, title, album, artwork_url, tags, duration, source FROM tracks "
+        "WHERE stream_id=? AND ts>=? AND ts<? ORDER BY ts", (stream_id, start, end))]

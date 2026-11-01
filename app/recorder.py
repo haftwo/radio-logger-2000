@@ -23,6 +23,7 @@ class StreamWorker:
 
     def start(self) -> None:
         self.tasks.append(asyncio.create_task(self._record_loop()))
+        self.tasks.append(asyncio.create_task(metadata.refresh_station_info(self.stream)))
         if self.stream["is_music"]:
             if self.stream["meta_source"] in ("icy", "shazam"):
                 self.tasks.append(asyncio.create_task(metadata.detect_loop(self.stream)))

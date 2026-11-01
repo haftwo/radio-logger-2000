@@ -34,6 +34,11 @@
   let streams = [], editing = null, logoFor = null, me = null;
   const stateLabel = { recording: 'Recording', error: 'Error', disabled: 'Disabled', stopped: 'Stopped', starting: 'Starting' };
 
+  function stationHtml(st) {
+    if (!st || !(st.name || st.genre || st.description)) return '';
+    return `<div class="hint">Stream says: ${[st.name, st.genre, st.description].filter(Boolean).map(esc).join(' · ')}</div>`;
+  }
+
   function detectHtml(d) {
     if (!d) return '';
     const cls = { ok: 'recording', error: 'error' }[d.state] || '';
@@ -45,7 +50,8 @@
     $('streamRows').innerHTML = streams.length ? streams.map((s) => `
       <tr>
         <td><div class="slogo" data-logo="${s.id}" title="Upload logo">${s.logo ? `<img src="${esc(s.logo)}" alt="">` : `<span class="ph">${esc(initials(s.name))}</span>`}</div></td>
-        <td><div><strong>${esc(s.name)}</strong></div><div class="url" title="${esc(s.url)}">${esc(s.url)}</div></td>
+        <td><div><strong>${esc(s.name)}</strong></div><div class="url" title="${esc(s.url)}">${esc(s.url)}</div>
+            ${stationHtml(s.station)}</td>
         <td><span class="pill ${s.status}" title="${esc(s.detail.last_error)}"><span class="dot"></span>${stateLabel[s.status] || s.status}</span>
             ${s.detail.restarts ? `<div class="hint">${s.detail.restarts} restart(s)</div>` : ''}</td>
         <td>${s.is_music ? `Music · ${s.meta_source === 'icy' ? 'auto' : s.meta_source === 'shazam' ? 'Shazam' : 'no detection'}` : 'Talk / general'}
@@ -88,6 +94,7 @@
     const f = $('streamForm');
     $('streamDlgTitle').textContent = s ? `Edit ${s.name}` : 'Add stream';
     f.name.value = s ? s.name : ''; f.url.value = s ? s.url : '';
+    $('detectInfo').textContent = '';
     f.enabled.checked = s ? s.enabled : true; f.is_music.checked = s ? s.is_music : false;
     f.meta_source.value = s ? s.meta_source : 'icy';
     $('metaField').hidden = !f.is_music.checked;
@@ -97,6 +104,22 @@
   }
   $('streamForm').is_music.addEventListener('change', (e) => ($('metaField').hidden = !e.target.checked));
   $('addStream').onclick = () => openStream(null);
+  $('detectBtn').onclick = async () => {
+    const f = $('streamForm'), url = f.url.value.trim();
+    if (!url) return toast('Enter the stream URL first', true);
+    const btn = $('detectBtn'); btn.disabled = true; btn.textContent = 'Detecting…';
+    try {
+      const r = await api('/api/admin/probe?url=' + encodeURIComponent(url));
+      if (r.name) f.name.value = r.name;
+      const bits = [r.genre, r.description, r.br && r.br + ' kbps', r.content_type].filter(Boolean);
+      $('detectInfo').textContent = r.name ? `Found "${r.name}"${bits.length ? ' · ' + bits.join(' · ') : ''}`
+        : (r.error ? `Couldn't read the stream: ${r.error}` : "The stream doesn't announce a name — type one in.");
+      if (r.genre && /music|rock|pop|indie|jazz|dance|hits|country|classical|alternative/i.test(r.genre) && !f.is_music.checked) {
+        f.is_music.checked = true; $('metaField').hidden = false;
+      }
+    } catch (er) { $('detectInfo').textContent = er.message; }
+    finally { btn.disabled = false; btn.textContent = 'Detect from stream'; }
+  };
   $('streamForm').addEventListener('submit', async (e) => {
     if (e.submitter && e.submitter.value === 'cancel') return;
     e.preventDefault();
