@@ -22,6 +22,7 @@
     <button class="active" data-tab="streams">Streams</button>
     <button data-tab="recording">Recording</button>
     <button data-tab="users">Users</button>
+    <button data-tab="sso">Single sign-on</button>
   </div>
 
   <!-- streams -->
@@ -89,10 +90,74 @@
         <button class="btn primary" id="addUser">+ Add user</button>
       </div>
       <table class="list">
-        <thead><tr><th>Username</th><th>Role</th><th>Created</th><th></th></tr></thead>
+        <thead><tr><th>User</th><th>Sign-in</th><th>Role</th><th>Last sign-in</th><th></th></tr></thead>
         <tbody id="userRows"></tbody>
       </table>
-      <p class="hint">Viewers can replay and listen live. Admins can also manage streams, settings and users.</p>
+      <p class="hint">Viewers can replay and listen live. Admins can also manage streams, settings and users. Microsoft accounts are created automatically on first sign-in when single sign-on is on.</p>
+    </div>
+  </section>
+  <!-- single sign-on -->
+  <section class="tab" id="tab-sso">
+    <div class="cols">
+      <form class="panel" id="ssoForm" autocomplete="off">
+        <h2>Microsoft Entra ID (Azure AD)</h2>
+        <label class="check"><input type="checkbox" name="sso_enabled"> <b>Enable "Sign in with Microsoft"</b></label>
+        <label class="field"><span>Directory (tenant) ID</span>
+          <input type="text" name="sso_tenant_id" placeholder="00000000-0000-0000-0000-000000000000">
+          <div class="hint">Use your tenant's ID or domain (e.g. contoso.onmicrosoft.com) so only your organisation can sign in.</div></label>
+        <label class="field"><span>Application (client) ID</span><input type="text" name="sso_client_id" placeholder="00000000-0000-0000-0000-000000000000"></label>
+        <label class="field"><span>Client secret <span id="secretState" class="muted"></span></span>
+          <input type="password" name="sso_client_secret" autocomplete="new-password" placeholder="Paste the secret Value (not the Secret ID)">
+          <div class="hint">Stored on the server and never shown again. Leave blank to keep the saved one. Remember secrets expire. Set a reminder to rotate it.</div></label>
+
+        <h2 style="margin-top:22px">Who gets in</h2>
+        <label class="field"><span>Admin app role</span><input type="text" name="sso_admin_role" placeholder="Admin">
+          <div class="hint">Users with this app role (the role's <i>Value</i>) become admins.</div></label>
+        <label class="field"><span>Admin group object ID (optional)</span><input type="text" name="sso_admin_group" placeholder="Group object ID, if you use groups instead of app roles"></label>
+        <div class="field"><span class="muted" style="font-size:13px;display:block;margin-bottom:6px">Everyone else</span>
+          <div class="radio-row">
+            <label class="check" style="margin:0"><input type="radio" name="sso_viewer_access" value="tenant"> Anyone who can sign in to the app gets Viewer access</label>
+            <label class="check" style="margin:0"><input type="radio" name="sso_viewer_access" value="role"> Only users with the Viewer role or group:</label>
+          </div>
+          <input type="text" name="sso_viewer_role" placeholder="Viewer" style="margin-top:6px"></div>
+        <label class="field"><span>Password sign-in</span>
+          <select name="sso_password_login">
+            <option value="all">Allow local accounts as well as Microsoft sign-in</option>
+            <option value="admins">Local admin accounts only (break-glass)</option>
+          </select>
+          <div class="hint" id="localAdmins"></div></label>
+
+        <h2 style="margin-top:22px">Advanced</h2>
+        <label class="field"><span>Public URL (optional)</span><input type="text" name="sso_public_url" placeholder="https://radiologger.example.com">
+          <div class="hint">Set this if the redirect URI shown opposite isn't your real HTTPS address (e.g. behind a reverse proxy).</div></label>
+        <label class="field"><span>Button label</span><input type="text" name="sso_button_label" maxlength="60"></label>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn primary" type="submit">Save single sign-on</button>
+          <a class="btn" id="ssoTest" href="/auth/login" target="_blank" rel="noopener">Test sign-in in a new tab</a>
+        </div>
+      </form>
+
+      <div>
+        <div class="panel">
+          <h2>Redirect URI</h2>
+          <div class="copyrow"><input type="text" id="redirectUri" readonly><button class="btn" type="button" id="copyRedirect">Copy</button></div>
+          <p class="hint">Add this to the app registration under <b>Authentication → Web → Redirect URIs</b>. It must be HTTPS (your Cloudflare hostname works).</p>
+          <div class="stat"><span>Status</span><span id="ssoStatus" class="mono">—</span></div>
+        </div>
+        <div class="panel" style="margin-top:18px">
+          <h2>Setting up the app registration</h2>
+          <div class="callout">
+            <ol>
+              <li>In the Entra admin centre, open <b>App registrations → New registration</b>. Name it "Radio Logger", choose <b>Accounts in this organizational directory only</b>, and add the redirect URI above as a <b>Web</b> platform.</li>
+              <li>Copy the <b>Application (client) ID</b> and <b>Directory (tenant) ID</b> from the Overview page into this form.</li>
+              <li>Under <b>Certificates &amp; secrets</b>, create a client secret and paste its <b>Value</b> here.</li>
+              <li>Under <b>App roles</b>, create two roles for <b>Users/Groups</b>: value <b>Admin</b> and value <b>Viewer</b>.</li>
+              <li>In <b>Enterprise applications → Radio Logger → Users and groups</b>, assign people or groups to those roles. To limit sign-in to assigned users only, set <b>Properties → Assignment required</b> to Yes.</li>
+              <li>Using groups instead? Under <b>Token configuration</b>, add a groups claim (choose "Groups assigned to the application") and paste the admin group's object ID above.</li>
+            </ol>
+          </div>
+        </div>
+      </div>
     </div>
   </section>
 </main>
@@ -129,6 +194,7 @@
     <label class="field"><span>Username</span><input type="text" name="username" required maxlength="40" autocomplete="off"></label>
     <label class="field"><span id="pwLabel">Password</span><input type="password" name="password" autocomplete="new-password" minlength="8"></label>
     <label class="field"><span>Role</span><select name="role"><option value="viewer">Viewer</option><option value="admin">Admin</option></select></label>
+    <p class="hint" id="ssoUserNote" hidden>This person signs in with Microsoft. Their role is re-synced from Entra ID app roles/groups each time they sign in.</p>
     <div class="actions">
       <button class="btn" value="cancel" formnovalidate>Cancel</button>
       <button class="btn primary" value="save">Save</button>

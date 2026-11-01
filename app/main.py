@@ -14,9 +14,9 @@ from PIL import Image
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
-from . import audio, auth, db, metadata
+from . import audio, auth, db, metadata, sso
 from .recorder import check_writable, manager
 
 logging.basicConfig(level=os.environ.get("RL_LOG_LEVEL", "INFO"),
@@ -31,6 +31,7 @@ APP_NAME = "Radio Logger - 2000"
 async def lifespan(_app):
     db.init()
     auth.ensure_admin()
+    sso.seed_from_env()
     os.makedirs(LOGO_DIR, exist_ok=True)
     await manager.start()
     yield
@@ -88,12 +89,65 @@ def login_page():
 
 @app.post("/login")
 def login(request: Request, username: str = Form(...), password: str = Form(...)):
-    u = db.q1("SELECT * FROM users WHERE username=?", (username.strip(),))
-    if not u or not auth.verify_password(password, u["password_hash"]):
+    u = db.q1("SELECT * FROM users WHERE username=? AND auth='local'", (username.strip(),))
+    if not u or not u["password_hash"] or not auth.verify_password(password, u["password_hash"]):
         time.sleep(0.5)
         return RedirectResponse("/login?error=1", 303)
+    if sso.enabled() and sso.config()["sso_password_login"] == "admins" and u["role"] != "admin":
+        return RedirectResponse("/login?error=sso_only", 303)
     request.session.clear()
     request.session["uid"] = u["id"]
+    db.ex("UPDATE users SET last_login=? WHERE id=?", (int(time.time()), u["id"]))
+    return RedirectResponse("/", 303)
+
+
+# ---- Microsoft Entra ID single sign-on ---------------------------------------------
+
+@app.get("/auth/config")
+def auth_config():
+    """Public: tells the login page which sign-in options to show."""
+    c = sso.config()
+    return {"sso": sso.enabled(), "label": c["sso_button_label"] or "Sign in with Microsoft",
+            "password_login": "admins" if sso.enabled() and c["sso_password_login"] == "admins" else "all"}
+
+
+@app.get("/auth/login")
+async def sso_login(request: Request):
+    if not sso.enabled():
+        return RedirectResponse("/login?error=sso_off", 303)
+    try:
+        return RedirectResponse(await sso.login_url(request), 303)
+    except Exception as e:
+        logging.getLogger("radiologger.sso").exception("SSO start failed")
+        return RedirectResponse("/login?" + urlencode({"sso_error": f"Couldn't reach Microsoft: {e}"}), 303)
+
+
+@app.get("/auth/callback")
+async def sso_callback(request: Request, code: str = "", state: str = "", error: str = "",
+                       error_description: str = ""):
+    log = logging.getLogger("radiologger.sso")
+    if error:
+        msg = (error_description or error).split("\r\n")[0][:300]
+        return RedirectResponse("/login?" + urlencode({"sso_error": msg}), 303)
+    try:
+        claims = await sso.complete(request, code, state)
+    except sso.SSOError as e:
+        return RedirectResponse("/login?" + urlencode({"sso_error": str(e)}), 303)
+    except Exception as e:
+        log.exception("SSO callback failed")
+        return RedirectResponse("/login?" + urlencode({"sso_error": f"Sign-in failed: {e}"}), 303)
+    if "_claim_names" in claims and "groups" in claims.get("_claim_names", {}):
+        log.warning("Group overage for %s: too many groups for the token; use app roles or "
+                    "'Groups assigned to the application'", claims.get("preferred_username"))
+    role = sso.role_for(claims)
+    who = claims.get("preferred_username") or claims.get("email") or "this account"
+    if not role:
+        return RedirectResponse("/login?" + urlencode(
+            {"sso_error": f"{who} isn't assigned access to Radio Logger. Ask an administrator."}), 303)
+    uid = sso.upsert_user(claims, role)
+    request.session.clear()
+    request.session["uid"] = uid
+    log.info("SSO sign-in: %s as %s", who, role)
     return RedirectResponse("/", 303)
 
 
@@ -365,9 +419,66 @@ async def upload_logo(stream_id: int, file: UploadFile, user=Depends(auth.requir
     return {"logo": f"/logos/{name}"}
 
 
+class SSOIn(BaseModel):
+    sso_enabled: bool = False
+    sso_tenant_id: str = Field(default="", max_length=100)
+    sso_client_id: str = Field(default="", max_length=100)
+    sso_client_secret: str | None = Field(default=None, max_length=500)   # None/blank = keep current
+    sso_admin_role: str = Field(default="Admin", max_length=100)
+    sso_admin_group: str = Field(default="", max_length=100)
+    sso_viewer_access: str = Field(default="tenant", pattern="^(tenant|role)$")
+    sso_viewer_role: str = Field(default="Viewer", max_length=100)
+    sso_password_login: str = Field(default="all", pattern="^(all|admins)$")
+    sso_public_url: str = Field(default="", max_length=300)
+    sso_button_label: str = Field(default="Sign in with Microsoft", max_length=60)
+
+
+@app.get("/api/admin/sso")
+def get_sso(request: Request, user=Depends(auth.require_admin)):
+    c = sso.config()
+    secret = c.pop("sso_client_secret")
+    return {**c, "sso_enabled": c["sso_enabled"] == "1", "secret_set": bool(secret),
+            "redirect_uri": sso.redirect_uri(request), "ready": sso.enabled(),
+            "local_admins": db.q1("SELECT COUNT(*) n FROM users WHERE role='admin' AND auth='local' "
+                                  "AND password_hash<>''")["n"]}
+
+
+@app.put("/api/admin/sso")
+async def put_sso(body: SSOIn, user=Depends(auth.require_admin)):
+    data = body.model_dump()
+    if data["sso_public_url"] and not data["sso_public_url"].startswith(("https://", "http://localhost")):
+        raise HTTPException(400, "Public URL must start with https:// (Microsoft requires HTTPS redirects)")
+    secret = (data.pop("sso_client_secret") or "").strip()
+    if secret:
+        db.set_setting("sso_client_secret", secret)
+    data["sso_enabled"] = "1" if data["sso_enabled"] else "0"
+    if data["sso_enabled"] == "1":
+        if not (data["sso_tenant_id"] and data["sso_client_id"] and (secret or sso.config()["sso_client_secret"])):
+            raise HTTPException(400, "Tenant ID, Client ID and Client secret are all needed to turn SSO on")
+        try:
+            await sso.discovery(data["sso_tenant_id"].strip())
+        except Exception:
+            raise HTTPException(400, f"Microsoft doesn't recognise tenant '{data['sso_tenant_id']}'")
+    if data["sso_password_login"] == "admins" and data["sso_enabled"] == "1":
+        if not db.q1("SELECT 1 FROM users WHERE role='admin' AND auth='local' AND password_hash<>''"):
+            raise HTTPException(400, "Keep at least one local admin account before limiting password sign-in")
+    for k, v in data.items():
+        db.set_setting(k, str(v).strip())
+    sso._discovery.clear()
+    return {"ok": True}
+
+
+@app.delete("/api/admin/sso/secret")
+def clear_sso_secret(user=Depends(auth.require_admin)):
+    db.set_setting("sso_client_secret", "")
+    db.set_setting("sso_enabled", "0")
+    return {"ok": True}
+
+
 @app.get("/api/admin/users")
 def list_users(user=Depends(auth.require_admin)):
-    return db.q("SELECT id, username, role, created_at FROM users ORDER BY username")
+    return db.q("SELECT id, username, role, created_at, auth, display_name, email, last_login "
+                "FROM users ORDER BY auth, username")
 
 
 @app.post("/api/admin/users")
@@ -385,6 +496,15 @@ def admin_count() -> int:
     return db.q1("SELECT COUNT(*) n FROM users WHERE role='admin'")["n"]
 
 
+def is_last_breakglass(target: dict) -> bool:
+    """True if removing this account's local admin access would lock everyone out of password sign-in."""
+    if not (sso.enabled() and sso.config()["sso_password_login"] == "admins"):
+        return False
+    if target["auth"] != "local" or target["role"] != "admin":
+        return False
+    return db.q1("SELECT COUNT(*) n FROM users WHERE role='admin' AND auth='local' AND password_hash<>''")["n"] <= 1
+
+
 @app.put("/api/admin/users/{uid}")
 def update_user(uid: int, body: UserIn, user=Depends(auth.require_admin)):
     target = db.q1("SELECT * FROM users WHERE id=?", (uid,))
@@ -392,6 +512,13 @@ def update_user(uid: int, body: UserIn, user=Depends(auth.require_admin)):
         raise HTTPException(404)
     if target["role"] == "admin" and body.role != "admin" and admin_count() <= 1:
         raise HTTPException(400, "There must be at least one admin")
+    if body.role != "admin" and is_last_breakglass(target):
+        raise HTTPException(400, "This is the last local admin (your break-glass login while SSO is on)")
+    if target["auth"] == "sso":
+        if body.password:
+            raise HTTPException(400, "Microsoft accounts sign in with SSO and can't have a password")
+        db.ex("UPDATE users SET role=? WHERE id=?", (body.role, uid))  # refreshed from Entra at next sign-in
+        return {"ok": True, "note": "Role is re-synced from Microsoft at this user's next sign-in."}
     clash = db.q1("SELECT id FROM users WHERE username=? AND id<>?", (body.username.strip(), uid))
     if clash:
         raise HTTPException(400, "That username is taken")
@@ -407,9 +534,11 @@ def update_user(uid: int, body: UserIn, user=Depends(auth.require_admin)):
 def delete_user(uid: int, user=Depends(auth.require_admin)):
     if uid == user["id"]:
         raise HTTPException(400, "You can't delete your own account")
-    target = db.q1("SELECT role FROM users WHERE id=?", (uid,))
+    target = db.q1("SELECT role, auth FROM users WHERE id=?", (uid,))
     if not target:
         raise HTTPException(404)
+    if is_last_breakglass(target):
+        raise HTTPException(400, "This is the last local admin (your break-glass login while SSO is on)")
     if target["role"] == "admin" and admin_count() <= 1:
         raise HTTPException(400, "There must be at least one admin")
     db.ex("DELETE FROM users WHERE id=?", (uid,))

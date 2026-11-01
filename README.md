@@ -52,6 +52,24 @@ Storage guide: 128 kbps ≈ 1.4 GB per station per day.
 
 Point a public hostname (e.g. `radiologger.example.com`) at `http://radio-logger-2000:8000` (if cloudflared shares a Docker network with it) or `http://<unraid-ip>:8765`. Run only **one** uvicorn worker — the recorders live inside the app process.
 
+## Single sign-on (Microsoft Entra ID / Azure AD)
+
+Admin → **Single sign-on** adds a "Sign in with Microsoft" button using OpenID Connect
+(authorization code + PKCE). The tab shows the redirect URI to register and walks through the
+Entra app registration. In short:
+
+1. Entra admin centre → App registrations → New registration (single tenant), redirect URI
+   `https://<your-hostname>/auth/callback` (Web). HTTPS is required, and the Cloudflare hostname works.
+2. Paste the tenant ID, client ID and a client secret **Value** into the tab and tick Enable.
+3. Create app roles with values `Admin` and `Viewer`, and assign users/groups in Enterprise applications.
+   Or use a groups claim and paste the admin group's object ID.
+
+Users are created on first sign-in and their role is re-synced from Entra on every sign-in.
+"Password sign-in → Local admin accounts only" turns everything else over to SSO while keeping a
+local admin as break-glass. The app won't let you remove the last one. Settings can be pre-seeded
+with `RL_SSO_TENANT_ID`, `RL_SSO_CLIENT_ID`, `RL_SSO_CLIENT_SECRET`, `RL_SSO_ADMIN_GROUP`,
+`RL_PUBLIC_URL` and `RL_SSO_ENABLED=true`.
+
 ## Updating
 
 Push to `main`, wait for the **Build and publish Docker image** action to finish, then in Unraid use

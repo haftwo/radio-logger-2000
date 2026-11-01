@@ -28,6 +28,7 @@
     document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('active', x === b));
     document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.id === 'tab-' + b.dataset.tab));
     if (b.dataset.tab === 'recording') loadSettings();
+    if (b.dataset.tab === 'sso') loadSSO();
   }));
 
   // ---------- streams ----------
@@ -163,9 +164,11 @@
     users = await api('/api/admin/users');
     $('userRows').innerHTML = users.map((u) => `
       <tr>
-        <td><strong>${esc(u.username)}</strong>${me && me.id === u.id ? ' <span class="pill">you</span>' : ''}</td>
+        <td><strong>${esc(u.display_name && u.auth === 'sso' ? u.display_name : u.username)}</strong>${me && me.id === u.id ? ' <span class="pill">you</span>' : ''}
+            ${u.auth === 'sso' ? `<div class="hint">${esc(u.email || u.username)}</div>` : ''}</td>
+        <td>${u.auth === 'sso' ? '<span class="badge-sso">Microsoft</span>' : '<span class="pill">Local</span>'}</td>
         <td>${u.role === 'admin' ? 'Admin' : 'Viewer'}</td>
-        <td class="muted">${new Date(u.created_at * 1000).toLocaleDateString()}</td>
+        <td class="muted">${u.last_login ? new Date(u.last_login * 1000).toLocaleString() : 'never'}</td>
         <td class="actions"><button class="btn" data-uedit="${u.id}">Edit</button>
           ${me && me.id === u.id ? '' : `<button class="btn danger" data-udel="${u.id}">Delete</button>`}</td>
       </tr>`).join('');
@@ -185,6 +188,10 @@
     $('pwLabel').textContent = u ? 'New password (leave blank to keep)' : 'Password (8+ characters)';
     f.username.value = u ? u.username : ''; f.password.value = ''; f.role.value = u ? u.role : 'viewer';
     f.password.required = !u;
+    const isSSO = u && u.auth === 'sso';
+    f.username.readOnly = !!isSSO;
+    f.password.closest('label').hidden = !!isSSO;
+    $('ssoUserNote').hidden = !isSSO;
     $('userDlg').showModal();
   }
   $('addUser').onclick = () => openUser(null);
@@ -196,8 +203,48 @@
     try {
       if (editingUser) await api(`/api/admin/users/${editingUser.id}`, 'PUT', body);
       else await api('/api/admin/users', 'POST', body);
-      $('userDlg').close(); toast('User saved'); loadUsers();
+      $('userDlg').close(); toast(editingUser && editingUser.auth === 'sso' ? 'Saved. Microsoft re-syncs the role at next sign-in' : 'User saved'); loadUsers();
     } catch (er) { toast(er.message, true); }
+  });
+
+  // ---------- single sign-on ----------
+  async function loadSSO() {
+    const c = await api('/api/admin/sso'), f = $('ssoForm');
+    f.sso_enabled.checked = c.sso_enabled;
+    ['sso_tenant_id', 'sso_client_id', 'sso_admin_role', 'sso_admin_group', 'sso_viewer_role', 'sso_public_url', 'sso_button_label']
+      .forEach((k) => (f[k].value = c[k] || ''));
+    f.sso_client_secret.value = '';
+    f.sso_password_login.value = c.sso_password_login;
+    f.querySelectorAll('[name=sso_viewer_access]').forEach((r) => (r.checked = r.value === c.sso_viewer_access));
+    $('secretState').textContent = c.secret_set ? '· saved' : '· not set';
+    $('redirectUri').value = c.redirect_uri;
+    $('localAdmins').textContent = `${c.local_admins} local admin account(s) with a password, used for break-glass access if Microsoft sign-in is unavailable.`;
+    const st = $('ssoStatus');
+    st.textContent = c.ready ? 'On: Microsoft sign-in active' : c.sso_enabled ? 'Incomplete settings' : 'Off';
+    st.style.color = c.ready ? 'var(--ok)' : c.sso_enabled ? 'var(--warn)' : '';
+    $('ssoTest').hidden = !c.ready;
+    if (!c.redirect_uri.startsWith('https://')) {
+      $('redirectUri').title = 'Microsoft only accepts https:// redirect URIs (except localhost). Set the Public URL.';
+      st.textContent += ' · redirect URI is not HTTPS';
+    }
+  }
+  $('copyRedirect').onclick = async () => {
+    try { await navigator.clipboard.writeText($('redirectUri').value); toast('Redirect URI copied'); }
+    catch { $('redirectUri').select(); toast('Press Ctrl/Cmd+C to copy'); }
+  };
+  $('ssoForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.target, v = (k) => f[k].value.trim();
+    const body = {
+      sso_enabled: f.sso_enabled.checked, sso_tenant_id: v('sso_tenant_id'), sso_client_id: v('sso_client_id'),
+      sso_client_secret: f.sso_client_secret.value.trim() || null, sso_admin_role: v('sso_admin_role'),
+      sso_admin_group: v('sso_admin_group'), sso_viewer_role: v('sso_viewer_role'),
+      sso_viewer_access: (f.querySelector('[name=sso_viewer_access]:checked') || {}).value || 'tenant',
+      sso_password_login: f.sso_password_login.value, sso_public_url: v('sso_public_url'),
+      sso_button_label: v('sso_button_label') || 'Sign in with Microsoft',
+    };
+    try { await api('/api/admin/sso', 'PUT', body); toast('Single sign-on saved'); loadSSO(); }
+    catch (er) { toast(er.message, true); }
   });
 
   (async () => {

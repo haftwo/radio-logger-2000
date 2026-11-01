@@ -13,13 +13,40 @@
   <div class="panel card">
     <img src="/static/logo.png" alt="">
     <h1>Radio Logger - 2000</h1>
-    <form method="post" action="/login">
-      <div class="err" id="err">Wrong username or password.</div>
+    <div class="err" id="err"></div>
+    <a class="btn ms-btn" id="ssoBtn" href="/auth/login" hidden>
+      <svg viewBox="0 0 21 21" aria-hidden="true"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>
+      <span id="ssoLabel">Sign in with Microsoft</span>
+    </a>
+    <div class="or" id="orLine" hidden><span>or</span></div>
+    <button class="linkish" id="showLocal" type="button" hidden>Use a local admin account</button>
+    <form method="post" action="/login" id="pwForm">
       <label class="field"><span>Username</span><input type="text" name="username" autocomplete="username" required autofocus></label>
       <label class="field"><span>Password</span><input type="password" name="password" autocomplete="current-password" required></label>
       <button class="btn primary" style="width:100%" type="submit">Sign in</button>
     </form>
   </div>
-<script>if (location.search.includes('error')) document.getElementById('err').style.display = 'block';</script>
+<script>
+(async () => {
+  const $ = (id) => document.getElementById(id);
+  const q = new URLSearchParams(location.search), err = $('err');
+  const msg = q.get('sso_error') || ({ '1': 'Wrong username or password.',
+    sso_only: 'Password sign-in is limited to local admins. Use Sign in with Microsoft.',
+    sso_off: 'Single sign-on is not set up yet.' })[q.get('error')];
+  if (msg) { err.textContent = msg; err.style.display = 'block'; }
+  try {
+    const c = await (await fetch('/auth/config')).json();
+    if (!c.sso) return;
+    $('ssoLabel').textContent = c.label;
+    $('ssoBtn').hidden = false;
+    if (c.password_login === 'admins' && q.get('error') !== '1') {
+      $('pwForm').hidden = true; $('showLocal').hidden = false;
+      $('showLocal').onclick = () => { $('pwForm').hidden = false; $('showLocal').hidden = true; $('pwForm').username.focus(); };
+    } else {
+      $('orLine').hidden = false;
+    }
+  } catch (e) { /* SSO config unavailable: password form still works */ }
+})();
+</script>
 </body>
 </html>

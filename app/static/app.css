@@ -220,3 +220,18 @@ dialog input[type=time] { width: auto; }
 .timeline .chunk { top: 20px; }
 .btn:disabled:hover { border-color: var(--line); }
 @media (max-width: 700px) { .tl-hint { display: none; } }
+
+/* SSO */
+.ms-btn { width: 100%; background: #fff; color: #1b1b1b; border-color: #8c8c8c; font-weight: 600; padding: 10px 14px; margin-bottom: 14px; }
+.ms-btn:hover { border-color: var(--accent); background: #f3f3f3; }
+.ms-btn svg { width: 18px; height: 18px; }
+.or { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; margin: 4px 0 14px; }
+.or::before, .or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.linkish { background: none; border: none; color: var(--muted); font-size: 13px; cursor: pointer; text-decoration: underline; margin-bottom: 6px; }
+.copyrow { display: flex; gap: 8px; }
+.copyrow input { font-family: var(--mono); font-size: 12px; }
+.callout { background: var(--bg-2); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; padding: 12px 14px; font-size: 13px; line-height: 1.55; color: var(--muted); }
+.callout b { color: var(--text); }
+.callout ol { margin: 6px 0 0; padding-left: 18px; }
+.radio-row { display: flex; flex-direction: column; gap: 6px; }
+.badge-sso { font-size: 11px; padding: 2px 8px; border-radius: 99px; background: #00a4ef22; color: #8fd6ff; border: 1px solid #00a4ef55; }

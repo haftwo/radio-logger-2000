@@ -73,6 +73,12 @@ def init() -> None:
         for col, ddl in (("tags", "TEXT"), ("duration", "REAL"), ("source", "TEXT")):
             if col not in cols:
                 c.execute(f"ALTER TABLE tracks ADD COLUMN {col} {ddl}")
+        cols = {r[1] for r in c.execute("PRAGMA table_info(users)")}
+        for col, ddl in (("auth", "TEXT NOT NULL DEFAULT 'local'"), ("sso_sub", "TEXT"), ("display_name", "TEXT"),
+                         ("email", "TEXT"), ("last_login", "INTEGER")):
+            if col not in cols:
+                c.execute(f"ALTER TABLE users ADD COLUMN {col} {ddl}")
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_sso ON users(sso_sub) WHERE sso_sub IS NOT NULL")
         cols = {r[1] for r in c.execute("PRAGMA table_info(streams)")}
         for col in ("icy_name", "icy_genre", "icy_description", "icy_url"):
             if col not in cols:
