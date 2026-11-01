@@ -4,7 +4,7 @@ Records internet radio streams to disk in clock-aligned chunks and gives you a w
 
 ## What's in the box
 
-- **Dashboard** – pick a station (with its logo) and a date, click anywhere on the 24-hour timeline to start playback, scrub the waveform, step chunk to chunk (playback rolls on to the next chunk and the next day automatically), download a chunk, or hit **Listen live**. Keyboard: space = play/pause, ←/→ = 10 s.
+- **Dashboard** – pick a station (with its logo) and a date, click anywhere on the 24-hour timeline to start playback, scrub the waveform, step chunk to chunk (playback rolls on to the next chunk and the next day automatically), download a chunk, or hit **Listen live**. Jump straight to a moment with the date + time box and **Go**, or deep-link with `/?stream=1&date=2026-11-01&time=08:30:00`. Zoom the waveform with the mouse wheel, the +/− buttons or keys (0 = fit), drag to pan, click to seek. Keyboard: space = play/pause, ←/→ = 10 s.
 - **Music stations** – show the cover art and track for whatever moment you're replaying, plus a "Played on this day" list you can click to jump to a song. Track changes are marked on the timeline and waveform.
 - **Admin** (admin role only)
   - *Streams*: add/edit/delete, enable/disable, restart a recorder, upload a station logo (click the logo), see the recorder log.
@@ -19,7 +19,7 @@ Records internet radio streams to disk in clock-aligned chunks and gives you a w
 | Files | `<recordings>/<station-slug>/YYYY/MM/DD/YYYYMMDD-HHMMSS.mp3` in the container's `TZ`. Waveform data is cached next to each chunk as `.peaks.json`. |
 | Retention | Hourly sweep deletes chunks and track history older than the retention setting. |
 | Live | `/api/streams/{id}/live` re-encodes the source to MP3, so HLS/AAC/http streams all play in the browser, including over your https Cloudflare hostname. |
-| Track detection | **Stream metadata** reads Icecast/Shoutcast `StreamTitle`. **Shazam** fingerprints the last ~12 s of the current chunk every N seconds (for HLS streams like Double J that have no ICY tags; uses the unofficial `shazamio` library). Artwork comes from Shazam, otherwise the iTunes Search API. |
+| Track detection | **Automatic** (default) reads Icecast/Shoutcast `StreamTitle` and falls back to Shazam when the stream has no titles (HLS, or titles that can't be read). Detection status shows on Admin → Streams. **Shazam** fingerprints the last ~12 s of the current chunk every N seconds (for HLS streams like Double J that have no ICY tags; uses the unofficial `shazamio` library). Artwork comes from Shazam, otherwise the iTunes Search API. |
 | Auth | Session cookie, PBKDF2-hashed passwords in SQLite at `/config/radiologger.db`. |
 
 ## Install on Unraid

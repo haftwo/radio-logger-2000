@@ -14,7 +14,7 @@ from . import db
 
 FILE_RE = re.compile(r"^(\d{8})-(\d{6})\.mp3$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-PEAKS_PER_SECOND = 4  # waveform resolution sent to the browser
+PEAKS_PER_SECOND = 20  # waveform resolution sent to the browser (enough for deep zoom)
 
 
 def root() -> str:
@@ -106,8 +106,13 @@ def available_days(slug: str) -> list[str]:
 async def compute_peaks(path: str, cache: bool) -> dict:
     cache_path = path[:-4] + ".peaks.json"
     if os.path.exists(cache_path) and os.path.getmtime(cache_path) >= os.path.getmtime(path):
-        with open(cache_path) as f:
-            return json.load(f)
+        try:
+            with open(cache_path) as f:
+                cached = json.load(f)
+            if cached.get("per_second") == PEAKS_PER_SECOND:
+                return cached
+        except (OSError, ValueError):
+            pass
     rate = 8000  # keep enough bandwidth that the envelope reflects speech and music
     proc = await asyncio.create_subprocess_exec(
         "ffmpeg", "-v", "error", "-i", path, "-ac", "1", "-ar", str(rate), "-f", "s16le", "-",
@@ -121,6 +126,8 @@ async def compute_peaks(path: str, cache: bool) -> dict:
     for i in range(0, len(samples), step):
         seg = samples[i:i + step]
         peaks.append(round(max(max(seg), -min(seg)) / 32768, 3) if seg else 0)
+    if len(peaks) > 0:  # keep the JSON compact
+        peaks = [0 if v < 0.001 else v for v in peaks]
     data = {"per_second": PEAKS_PER_SECOND, "peaks": peaks}
     if cache:
         try:

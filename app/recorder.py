@@ -24,11 +24,8 @@ class StreamWorker:
     def start(self) -> None:
         self.tasks.append(asyncio.create_task(self._record_loop()))
         if self.stream["is_music"]:
-            src = self.stream["meta_source"]
-            if src == "icy":
-                self.tasks.append(asyncio.create_task(metadata.icy_loop(self.stream)))
-            elif src == "shazam":
-                self.tasks.append(asyncio.create_task(metadata.shazam_loop(self.stream)))
+            if self.stream["meta_source"] in ("icy", "shazam"):
+                self.tasks.append(asyncio.create_task(metadata.detect_loop(self.stream)))
 
     async def stop(self) -> None:
         for t in self.tasks:
@@ -107,6 +104,7 @@ class Manager:
         w.start()
 
     async def restart_stream(self, stream_id: int) -> None:
+        metadata.STATUS.pop(stream_id, None)
         w = self.workers.pop(stream_id, None)
         if w:
             await w.stop()
@@ -129,8 +127,10 @@ class Manager:
 
     def status(self, stream_id: int) -> dict:
         w = self.workers.get(stream_id)
-        return w.status() if w else {"state": "stopped", "last_error": "", "started_at": None,
-                                     "restarts": 0, "log": []}
+        st = w.status() if w else {"state": "stopped", "last_error": "", "started_at": None,
+                                   "restarts": 0, "log": []}
+        st["detect"] = metadata.STATUS.get(stream_id) if w and w.stream["is_music"] else None
+        return st
 
     async def _housekeeping(self) -> None:
         last_retention = 0.0

@@ -8,6 +8,7 @@
     chunkIdx: -1, peaks: null, pendingSeek: null,
     npTrackId: null, liveTrack: null,
     actx: null, analyser: null, levels: [],
+    zoom: 1, viewStart: 0, follow: true, lastPan: 0,
   };
 
   // ---------- helpers ----------
@@ -54,8 +55,11 @@
     $('main').hidden = false;
     S.date = today();
     renderStations();
-    const saved = Number(store.get('stream'));
+    const qp = new URLSearchParams(location.search);
+    const saved = Number(qp.get('stream') || store.get('stream'));
+    if (qp.get('date') && /^\d{4}-\d{2}-\d{2}$/.test(qp.get('date'))) S.date = qp.get('date');
     await selectStream(S.streams.find((s) => s.id === saved) || S.streams[0]);
+    if (qp.get('time')) { $('gotoTime').value = qp.get('time'); gotoDateTime(S.date, qp.get('time')); }
     setInterval(refreshTick, 20000);
     requestAnimationFrame(frame);
   }
@@ -175,6 +179,8 @@
     $('dl').href = url + '?download=1'; $('dl').hidden = false;
     $('waveLabel').textContent = `${S.date}  ${fmtTime(c.start)} – ${fmtTime(c.start + chunkLen(c))}${c.in_progress ? '  (recording)' : ''}`;
     S.peaks = null; $('waveMsg').textContent = 'Drawing waveform…'; $('waveMsg').hidden = false;
+    S.follow = true; S.viewStart = Math.max(0, offset - (chunkLen(c) / S.zoom) * 0.1);
+    $('zoomCtl').hidden = false; $('waveHelp').hidden = false;
     if (autoplay) ensureAudioGraph();
     audio.load();
     if (autoplay) audio.play().catch(() => {});
@@ -221,6 +227,7 @@
   async function startLive() {
     stopPlayback();
     S.mode = 'live'; S.levels = [];
+    $('zoomCtl').hidden = true; $('waveHelp').hidden = true;
     setLiveBtn(true);
     $('stMode').textContent = 'LIVE'; $('stMode').className = 'pill live';
     $('dl').hidden = true; $('waveLabel').textContent = 'Live input';
@@ -238,6 +245,7 @@
   function stopPlayback() {
     audio.pause(); audio.removeAttribute('src'); audio.load();
     S.mode = 'idle'; S.chunkIdx = -1; S.peaks = null; S.npTrackId = undefined;
+    $('zoomCtl').hidden = true; $('waveHelp').hidden = true;
     setLiveBtn(false);
     $('stMode').textContent = 'Replay'; $('stMode').className = 'pill';
     $('dl').hidden = true; $('waveLabel').textContent = '';
@@ -285,28 +293,67 @@
       return;
     }
     if (S.mode !== 'replay' || !S.peaks) return;
-    const pk = S.peaks.peaks, dur = pk.length / S.peaks.per_second || 1;
-    const bw = 2, gap = 1, n = Math.floor(w / (bw + gap));
-    const played = (audio.currentTime || 0) / dur;
+    const pk = S.peaks.peaks, pps = S.peaks.per_second, dur = waveDur();
+    const ct = audio.currentTime || 0;
+    // keep the playhead in view while playing, unless the user panned recently
+    if (!S.follow && Date.now() - S.lastPan > 4000) S.follow = true;
+    const len = dur / S.zoom;
+    if (S.follow && !audio.paused && (ct < S.viewStart || ct > S.viewStart + len * 0.92)) S.viewStart = ct - len * 0.08;
+    clampView();
+    const vs = S.viewStart, ve = vs + len;
+    const bw = S.zoom >= 8 ? 3 : 2, gap = 1, n = Math.floor(w / (bw + gap));
     for (let i = 0; i < n; i++) {
-      const a = Math.floor((i / n) * pk.length), b = Math.max(a + 1, Math.floor(((i + 1) / n) * pk.length));
+      const t0 = vs + (i / n) * len, t1 = vs + ((i + 1) / n) * len;
+      const a = Math.floor(t0 * pps), b = Math.max(a + 1, Math.floor(t1 * pps));
       let v = 0; for (let j = a; j < b && j < pk.length; j++) v = Math.max(v, pk[j]);
-      const bh = Math.max(1, Math.sqrt(v) * (h - 24));
-      g.fillStyle = i / n <= played ? grad : '#3a4a80';
+      const bh = Math.max(1, Math.sqrt(v) * (h - 44));
+      g.fillStyle = t0 <= ct ? grad : '#3a4a80';
       g.fillRect(i * (bw + gap), mid - bh / 2, bw, bh);
     }
-    // track change markers within this chunk
     const c = S.day.chunks[S.chunkIdx];
+    const xOf = (t) => ((t - vs) / len) * w;
+    // time ruler in station time
+    if (c) {
+      const steps = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
+      const step = steps.find((st) => (st / len) * w >= 80) || 3600;
+      g.fillStyle = '#8f9bc4'; g.font = '10px ui-monospace, monospace';
+      for (let t = Math.ceil((c.start + vs) / step) * step; t < c.start + ve; t += step) {
+        const x = xOf(t - c.start);
+        g.fillRect(x, h - 14, 1, 5);
+        g.fillText(step < 60 ? fmtTime(t) : fmtHM(t), x + 3, h - 4);
+      }
+    }
+    // track change markers
     if (c && S.stream.is_music) {
       g.fillStyle = '#ffb547'; g.font = '11px ui-monospace, monospace';
       S.day.tracks.forEach((t) => {
-        if (t.ts >= c.start && t.ts < c.start + dur) {
-          const x = ((t.ts - c.start) / dur) * w; g.fillRect(x, 22, 1, h - 30);
-          g.fillText((t.title || '').slice(0, 24), x + 4, h - 8);
+        const rel = t.ts - c.start;
+        if (rel >= vs && rel < ve) {
+          const x = xOf(rel); g.fillRect(x, 24, 1, h - 46);
+          g.fillText((t.title || '').slice(0, 28), x + 4, 36);
         }
       });
     }
-    const x = played * w; g.fillStyle = '#fff'; g.fillRect(x, 0, 2, h);
+    if (ct >= vs && ct <= ve) { g.fillStyle = '#fff'; g.fillRect(xOf(ct), 0, 2, h - 16); }
+    $('zoomLvl').textContent = (S.zoom < 10 ? S.zoom.toFixed(S.zoom % 1 ? 1 : 0) : Math.round(S.zoom)) + '×';
+  }
+
+  function waveDur() {
+    if (S.peaks && S.peaks.peaks.length) return S.peaks.peaks.length / S.peaks.per_second;
+    return isFinite(audio.duration) ? audio.duration : 1;
+  }
+  function maxZoom() { return Math.max(1, waveDur() / 5); } // deepest view is 5 seconds
+  function clampView() {
+    const len = waveDur() / S.zoom;
+    S.viewStart = Math.min(Math.max(0, S.viewStart), Math.max(0, waveDur() - len));
+  }
+  function setZoom(z, anchorFrac = 0.5) {
+    if (S.mode !== 'replay') return;
+    const dur = waveDur(), oldLen = dur / S.zoom;
+    const anchorT = S.viewStart + anchorFrac * oldLen;
+    S.zoom = Math.min(maxZoom(), Math.max(1, z));
+    S.viewStart = anchorT - anchorFrac * (dur / S.zoom);
+    clampView();
   }
 
   function updateHeads() {
@@ -350,10 +397,69 @@
   });
   tl.addEventListener('mouseleave', () => ($('tlHover').style.display = 'none'));
 
-  $('waveWrap').addEventListener('click', (e) => {
+  const ww = $('waveWrap');
+  const fracOf = (e) => { const r = ww.getBoundingClientRect(); return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)); };
+  ww.addEventListener('wheel', (e) => {
     if (S.mode !== 'replay' || !S.peaks) return;
-    const r = e.currentTarget.getBoundingClientRect(), dur = S.peaks.peaks.length / S.peaks.per_second;
-    audio.currentTime = ((e.clientX - r.left) / r.width) * dur;
+    e.preventDefault();
+    if (Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.shiftKey) {        // pan
+      const d = e.shiftKey ? e.deltaY : e.deltaX;
+      S.viewStart += (d / ww.clientWidth) * (waveDur() / S.zoom); clampView();
+      S.follow = false; S.lastPan = Date.now();
+    } else {                                                            // zoom at cursor
+      setZoom(S.zoom * Math.pow(1.0015, -e.deltaY), fracOf(e));
+      S.follow = false; S.lastPan = Date.now();
+    }
+  }, { passive: false });
+  let drag = null;
+  ww.addEventListener('pointerdown', (e) => {
+    if (S.mode !== 'replay' || !S.peaks) return;
+    drag = { x: e.clientX, vs: S.viewStart, moved: false };
+    ww.setPointerCapture(e.pointerId);
+  });
+  ww.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const dx = e.clientX - drag.x;
+    if (Math.abs(dx) > 4) drag.moved = true;
+    if (drag.moved && S.zoom > 1) {
+      ww.classList.add('dragging');
+      S.viewStart = drag.vs - (dx / ww.clientWidth) * (waveDur() / S.zoom); clampView();
+      S.follow = false; S.lastPan = Date.now();
+    }
+  });
+  ww.addEventListener('pointerup', (e) => {
+    if (!drag) return;
+    ww.classList.remove('dragging');
+    if (!drag.moved) {               // plain click = seek
+      audio.currentTime = S.viewStart + fracOf(e) * (waveDur() / S.zoom);
+      S.follow = true;
+    }
+    drag = null;
+  });
+  const zoomBtn = (f) => {          // buttons/keys zoom around the playhead and keep following it
+    const len = waveDur() / S.zoom, rel = (audio.currentTime - S.viewStart) / len;
+    setZoom(S.zoom * f, rel >= 0 && rel <= 1 ? rel : 0.5); S.follow = true;
+  };
+  $('zoomIn').onclick = (e) => { e.stopPropagation(); zoomBtn(2); };
+  $('zoomOut').onclick = (e) => { e.stopPropagation(); zoomBtn(0.5); };
+  $('zoomFit').onclick = (e) => { e.stopPropagation(); setZoom(1); S.follow = true; };
+  ['zoomIn', 'zoomOut', 'zoomFit'].forEach((id) => $(id).addEventListener('pointerdown', (e) => e.stopPropagation()));
+  const setWaveCursor = () => ww.classList.toggle('zoomed', S.zoom > 1);
+  setInterval(setWaveCursor, 300);
+
+  // ---------- go to date and time ----------
+  async function gotoDateTime(date, time) {
+    const [hh, mm, ss] = time.split(':').map(Number);
+    if (date !== S.date || !S.day) await loadDay(date);
+    // seconds since midnight in station time; day_start is local midnight
+    playAt(S.day.day_start + (hh || 0) * 3600 + (mm || 0) * 60 + (ss || 0));
+  }
+  $('gotoForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const d = $('date').value || S.date, t = $('gotoTime').value;
+    if (!t) return;
+    if (d > today()) return toast('That date is in the future');
+    gotoDateTime(d, t.length === 5 ? t + ':00' : t);
   });
 
   const seekBy = (s) => { if (S.mode === 'replay') audio.currentTime = Math.max(0, audio.currentTime + s); };
@@ -383,6 +489,9 @@
     if (e.code === 'Space') { e.preventDefault(); $('play').click(); }
     if (e.code === 'ArrowLeft') seekBy(-10);
     if (e.code === 'ArrowRight') seekBy(10);
+    if (e.key === '+' || e.key === '=') zoomBtn(2);
+    if (e.key === '-' || e.key === '_') zoomBtn(0.5);
+    if (e.key === '0') { setZoom(1); S.follow = true; }
   });
 
   boot().catch((e) => toast(e.message, true));

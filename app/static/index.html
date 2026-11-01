@@ -48,6 +48,10 @@
           <input type="date" id="date">
           <button class="btn icon" id="nextDay" title="Next day"><svg viewBox="0 0 24 24"><path d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button>
           <button class="btn" id="todayBtn">Today</button>
+          <form class="goto" id="gotoForm" title="Jump to a date and time">
+            <input type="time" id="gotoTime" step="1" value="00:00:00" required>
+            <button class="btn primary" type="submit">Go</button>
+          </form>
           <div class="spacer"></div>
           <span class="muted" id="dayInfo"></span>
         </div>
@@ -56,6 +60,13 @@
         <div class="wave-wrap" id="waveWrap">
           <canvas id="wave"></canvas>
           <div class="label" id="waveLabel"></div>
+          <div class="zoom" id="zoomCtl" hidden>
+            <button class="btn icon sm" id="zoomOut" title="Zoom out (−)">−</button>
+            <span class="mono" id="zoomLvl">1×</span>
+            <button class="btn icon sm" id="zoomIn" title="Zoom in (+)">+</button>
+            <button class="btn sm" id="zoomFit" title="Show the whole chunk (0)">Fit</button>
+          </div>
+          <div class="hint wavehelp" id="waveHelp" hidden>Scroll or +/− to zoom · drag to pan · click to seek</div>
           <div class="loading" id="waveMsg">Pick a time on the timeline above, or press Listen live.</div>
         </div>
 

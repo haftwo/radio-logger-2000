@@ -34,6 +34,12 @@
   let streams = [], editing = null, logoFor = null, me = null;
   const stateLabel = { recording: 'Recording', error: 'Error', disabled: 'Disabled', stopped: 'Stopped', starting: 'Starting' };
 
+  function detectHtml(d) {
+    if (!d) return '';
+    const cls = { ok: 'recording', error: 'error' }[d.state] || '';
+    return `<div class="hint" title="${esc(d.message)}"><span class="pill ${cls === 'recording' ? '' : cls}" style="margin-right:6px">${esc(d.source)}</span>${esc(d.message).slice(0, 90)}</div>`;
+  }
+
   async function loadStreams() {
     streams = await api('/api/admin/streams');
     $('streamRows').innerHTML = streams.length ? streams.map((s) => `
@@ -42,7 +48,8 @@
         <td><div><strong>${esc(s.name)}</strong></div><div class="url" title="${esc(s.url)}">${esc(s.url)}</div></td>
         <td><span class="pill ${s.status}" title="${esc(s.detail.last_error)}"><span class="dot"></span>${stateLabel[s.status] || s.status}</span>
             ${s.detail.restarts ? `<div class="hint">${s.detail.restarts} restart(s)</div>` : ''}</td>
-        <td>${s.is_music ? `Music · ${s.meta_source === 'icy' ? 'stream tags' : s.meta_source === 'shazam' ? 'Shazam' : 'no detection'}` : 'Talk / general'}</td>
+        <td>${s.is_music ? `Music · ${s.meta_source === 'icy' ? 'auto' : s.meta_source === 'shazam' ? 'Shazam' : 'no detection'}` : 'Talk / general'}
+            ${detectHtml(s.detail.detect)}</td>
         <td class="actions">
           <button class="btn" data-restart="${s.id}" title="Restart recorder">Restart</button>
           <button class="btn" data-edit="${s.id}">Edit</button>

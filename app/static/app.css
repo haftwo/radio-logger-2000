@@ -58,7 +58,7 @@ button, input, select { font: inherit; color: inherit; }
 .btn:disabled { opacity: .4; cursor: default; }
 .btn svg { width: 18px; height: 18px; fill: currentColor; }
 .btn.big svg { width: 24px; height: 24px; }
-input[type=text], input[type=password], input[type=url], input[type=number], input[type=date], select {
+input[type=text], input[type=password], input[type=url], input[type=number], input[type=date], input[type=time], select {
   background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; width: 100%;
 }
 input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
@@ -179,3 +179,15 @@ pre.log { background: var(--bg); border: 1px solid var(--line); border-radius: 8
 .login h1 { font-size: 22px; margin: 0 0 22px; }
 .login form { text-align: left; }
 .login .err { color: var(--live); font-size: 13px; margin-bottom: 12px; display: none; }
+
+/* go-to and waveform zoom */
+.goto { display: flex; gap: 6px; align-items: center; }
+.goto input[type=time] { width: auto; color-scheme: dark; }
+.wave-wrap { height: 170px; touch-action: none; }
+.wave-wrap.zoomed { cursor: grab; }
+.wave-wrap.dragging { cursor: grabbing; }
+.wave-wrap .zoom { position: absolute; top: 6px; right: 8px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.btn.sm { height: 28px; padding: 0 10px; font-size: 13px; }
+.btn.icon.sm { width: 28px; height: 28px; font-size: 16px; line-height: 1; }
+.wave-wrap .wavehelp { position: absolute; top: 12px; right: 180px; margin: 0; pointer-events: none; font-size: 11px; }
+@media (max-width: 700px) { .wave-wrap .wavehelp { display: none; } }
