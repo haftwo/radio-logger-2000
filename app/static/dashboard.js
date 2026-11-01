@@ -9,6 +9,7 @@
     npTrackId: null, liveTrack: null,
     actx: null, analyser: null, levels: [],
     zoom: 1, viewStart: 0, follow: true, lastPan: 0,
+    tlStart: null, tlSpan: null, tlFollow: true, tlLastPan: 0,   // timeline view window (seconds)
   };
 
   // ---------- helpers ----------
@@ -113,6 +114,7 @@
 
   // ---------- day data ----------
   async function loadDay(date, keepPlayback) {
+    if (date !== S.date) S.tlSpan = null;
     S.date = date;
     $('date').value = date;
     $('nextDay').disabled = date >= today();
@@ -126,32 +128,68 @@
       : 'No recordings for this day';
   }
 
+  // ---- timeline view (zoomable from the whole day down to 5 minutes) ----
+  const TL_MIN = 300;
+  function tlView() {
+    const d = S.day, full = d.day_end - d.day_start;
+    if (S.tlSpan == null || S.tlSpan > full) { S.tlSpan = full; S.tlStart = d.day_start; }
+    S.tlSpan = Math.max(TL_MIN, S.tlSpan);
+    S.tlStart = Math.min(Math.max(d.day_start, S.tlStart), d.day_end - S.tlSpan);
+    return { start: S.tlStart, span: S.tlSpan, full };
+  }
+  function tlZoom(factor, anchorFrac = 0.5) {
+    if (!S.day) return;
+    const v = tlView(), anchor = v.start + anchorFrac * v.span;
+    S.tlSpan = Math.min(v.full, Math.max(TL_MIN, v.span * factor));
+    S.tlStart = anchor - anchorFrac * S.tlSpan;
+    renderTimeline();
+  }
+  function tlFit() { S.tlSpan = null; renderTimeline(); }
+  function fmtSpan(sec) { return sec >= 3600 ? +(sec / 3600).toFixed(sec % 3600 ? 1 : 0) + ' h' : Math.round(sec / 60) + ' min'; }
+
+  let tlPending = false;
+  function renderTimelineSoon() { if (!tlPending) { tlPending = true; requestAnimationFrame(() => { tlPending = false; renderTimeline(); }); } }
+
   function renderTimeline() {
-    const tl = $('timeline'), d = S.day, span = d.day_end - d.day_start;
+    const tl = $('timeline'), d = S.day;
     tl.querySelectorAll('.chunk,.tick,.trk,.song').forEach((e) => e.remove());
-    const pct = (ts) => ((ts - d.day_start) / span) * 100;
+    const v = tlView(), vEnd = v.start + v.span;
+    const pct = (ts) => ((ts - v.start) / v.span) * 100;
     const frag = document.createDocumentFragment();
-    for (let h = 0; h < 24; h += 3) {
+    // ticks every 1 min … 3 h, at least ~70 px apart
+    const steps = [60, 300, 600, 900, 1800, 3600, 7200, 10800];
+    const step = steps.find((st) => (st / v.span) * tl.clientWidth >= 70) || 10800;
+    for (let t = Math.ceil((v.start - d.day_start) / step) * step + d.day_start; t < vEnd; t += step) {
       const e = document.createElement('div'); e.className = 'tick';
-      e.style.left = pct(d.day_start + h * 3600) + '%'; e.textContent = String(h).padStart(2, '0') + ':00';
+      e.style.left = pct(t) + '%'; e.textContent = fmtHM(t);
       frag.appendChild(e);
     }
     d.chunks.forEach((c) => {
+      const end = c.start + chunkLen(c);
+      if (end < v.start || c.start > vEnd) return;
       const e = document.createElement('div'); e.className = 'chunk' + (c.in_progress ? ' inprog' : '');
-      e.style.left = pct(c.start) + '%'; e.style.width = Math.max(0.05, (chunkLen(c) / span) * 100) + '%';
-      e.title = `${fmtHM(c.start)} – ${fmtHM(c.start + chunkLen(c))}`;
+      e.style.left = pct(c.start) + '%'; e.style.width = Math.max(0.05, ((end - c.start) / v.span) * 100) + '%';
+      e.title = `${fmtHM(c.start)} – ${fmtHM(end)}`;
       frag.appendChild(e);
     });
     d.tracks.forEach((t, i) => {
+      const end = songEnd(i);
+      if (end < v.start || t.ts > vEnd) return;
       const e = document.createElement('div'); e.className = 'song';
+      e.dataset.ts = t.ts;
       e.style.left = pct(t.ts) + '%';
-      e.style.width = Math.max(0.12, ((songEnd(i) - t.ts) / span) * 100) + '%';
+      e.style.width = Math.max(0.12, ((end - t.ts) / v.span) * 100) + '%';
       e.style.background = songColor(t);
       e.title = `${fmtHM(t.ts)}  ${t.artist ? t.artist + ' – ' : ''}${t.title}${t.tags && t.tags.length ? '  [' + t.tags.join(', ') + ']' : ''}`;
-      e.addEventListener('click', (ev) => { ev.stopPropagation(); playAt(t.ts); });
+      // when zoomed in far enough, label the song right on the timeline
+      if ((end - t.ts) / v.span * tl.clientWidth > 90) {
+        e.classList.add('wide'); e.textContent = `${t.artist ? t.artist + ' – ' : ''}${t.title}`;
+      }
       frag.appendChild(e);
     });
     tl.appendChild(frag);
+    tl.classList.toggle('zoomed', v.span < v.full);
+    $('tlZoomLvl').textContent = v.span >= v.full ? '24 h' : fmtSpan(v.span);
   }
 
   function renderTracks() {
@@ -210,7 +248,7 @@
     $('waveLabel').textContent = `${S.date}  ${fmtTime(c.start)} – ${fmtTime(c.start + chunkLen(c))}${c.in_progress ? '  (recording)' : ''}`;
     S.peaks = null; $('waveMsg').textContent = 'Drawing waveform…'; $('waveMsg').hidden = false;
     S.follow = true; S.viewStart = Math.max(0, offset - (chunkLen(c) / S.zoom) * 0.1);
-    $('zoomCtl').hidden = false; $('waveHelp').hidden = false;
+    setWaveZoomEnabled(true);
     if (autoplay) ensureAudioGraph();
     audio.load();
     if (autoplay) audio.play().catch(() => {});
@@ -257,7 +295,7 @@
   async function startLive() {
     stopPlayback();
     S.mode = 'live'; S.levels = [];
-    $('zoomCtl').hidden = true; $('waveHelp').hidden = true;
+    setWaveZoomEnabled(false);
     setLiveBtn(true);
     $('stMode').textContent = 'LIVE'; $('stMode').className = 'pill live';
     $('dl').hidden = true; $('waveLabel').textContent = 'Live input';
@@ -275,7 +313,7 @@
   function stopPlayback() {
     audio.pause(); audio.removeAttribute('src'); audio.load();
     S.mode = 'idle'; S.chunkIdx = -1; S.peaks = null; S.npTrackId = undefined;
-    $('zoomCtl').hidden = true; $('waveHelp').hidden = true;
+    setWaveZoomEnabled(false);
     setLiveBtn(false);
     $('stMode').textContent = 'Replay'; $('stMode').className = 'pill';
     $('dl').hidden = true; $('waveLabel').textContent = '';
@@ -373,6 +411,12 @@
     $('zoomLvl').textContent = (S.zoom < 10 ? S.zoom.toFixed(S.zoom % 1 ? 1 : 0) : Math.round(S.zoom)) + '×';
   }
 
+  function setWaveZoomEnabled(on) {
+    ['zoomIn', 'zoomOut', 'zoomFit'].forEach((id) => ($(id).disabled = !on));
+    $('waveHelp').hidden = !on;
+    if (!on) $('zoomLvl').textContent = '1×';
+  }
+
   function waveDur() {
     if (S.peaks && S.peaks.peaks.length) return S.peaks.peaks.length / S.peaks.per_second;
     return isFinite(audio.duration) ? audio.duration : 1;
@@ -395,7 +439,14 @@
     const ts = currentTs();
     const head = $('tlHead');
     if (ts && S.day && ts >= S.day.day_start && ts < S.day.day_end) {
-      head.style.display = 'block'; head.style.left = ((ts - S.day.day_start) / (S.day.day_end - S.day.day_start)) * 100 + '%';
+      const v = tlView();
+      if (S.tlFollow === false && Date.now() - S.tlLastPan > 5000) S.tlFollow = true;
+      if (S.tlFollow && v.span < v.full && !audio.paused && (ts < v.start || ts > v.start + v.span * 0.95)) {
+        S.tlStart = ts - v.span * 0.1; renderTimelineSoon();
+      }
+      if (ts >= v.start && ts <= v.start + v.span) {
+        head.style.display = 'block'; head.style.left = ((ts - v.start) / v.span) * 100 + '%';
+      } else head.style.display = 'none';
     } else head.style.display = 'none';
     $('clock').textContent = ts ? fmtTime(ts) : '--:--:--';
     if (S.mode === 'replay') $('clockSub').textContent = `${S.date} · ${audio.paused ? 'paused' : 'playing'}`;
@@ -424,8 +475,55 @@
 
   // ---------- inputs ----------
   const tl = $('timeline');
-  const tsFromEvent = (e) => { const r = tl.getBoundingClientRect(); return S.day.day_start + ((e.clientX - r.left) / r.width) * (S.day.day_end - S.day.day_start); };
-  tl.addEventListener('click', (e) => playAt(tsFromEvent(e)));
+  const tlFrac = (e) => { const r = tl.getBoundingClientRect(); return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)); };
+  const tsFromEvent = (e) => { const v = tlView(); return v.start + tlFrac(e) * v.span; };
+  tl.addEventListener('wheel', (e) => {
+    if (!S.day) return;
+    e.preventDefault();
+    const v = tlView();
+    if (Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.shiftKey) {
+      S.tlStart += ((e.shiftKey ? e.deltaY : e.deltaX) / tl.clientWidth) * v.span;
+    } else {
+      const anchor = tlFrac(e), at = v.start + anchor * v.span;
+      S.tlSpan = Math.min(v.full, Math.max(TL_MIN, v.span * Math.pow(1.0015, e.deltaY)));
+      S.tlStart = at - anchor * S.tlSpan;
+    }
+    S.tlFollow = false; S.tlLastPan = Date.now();
+    renderTimelineSoon();
+  }, { passive: false });
+  let tlDrag = null;
+  tl.addEventListener('pointerdown', (e) => { if (S.day) { tlDrag = { x: e.clientX, start: tlView().start, moved: false }; tl.setPointerCapture(e.pointerId); } });
+  tl.addEventListener('pointermove', (e) => {
+    if (!tlDrag) return;
+    const dx = e.clientX - tlDrag.x;
+    if (Math.abs(dx) > 4) tlDrag.moved = true;
+    const v = tlView();
+    if (tlDrag.moved && v.span < v.full) {
+      tl.classList.add('dragging');
+      S.tlStart = tlDrag.start - (dx / tl.clientWidth) * v.span;
+      S.tlFollow = false; S.tlLastPan = Date.now();
+      renderTimelineSoon();
+    }
+  });
+  tl.addEventListener('pointerup', (e) => {
+    if (!tlDrag) return;
+    tl.classList.remove('dragging');
+    if (!tlDrag.moved) {
+      const song = e.target.closest && e.target.closest('.song');
+      playAt(song ? Number(song.dataset.ts) : tsFromEvent(e));
+      S.tlFollow = true;
+    }
+    tlDrag = null;
+  });
+  $('tlIn').onclick = () => { tlZoom(0.25, playheadFrac()); S.tlFollow = true; };
+  $('tlOut').onclick = () => tlZoom(4, playheadFrac());
+  $('tlFit').onclick = () => { tlFit(); S.tlFollow = true; };
+  function playheadFrac() {
+    const ts = currentTs(), v = S.day && tlView();
+    if (!ts || !v) return 0.5;
+    const f = (ts - v.start) / v.span; return f >= 0 && f <= 1 ? f : 0.5;
+  }
+  window.addEventListener('resize', () => S.day && renderTimelineSoon());
   tl.addEventListener('mousemove', (e) => {
     const hv = $('tlHover'), r = tl.getBoundingClientRect();
     hv.style.display = 'block'; hv.style.left = e.clientX - r.left + 'px';

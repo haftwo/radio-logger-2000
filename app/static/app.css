@@ -208,3 +208,15 @@ pre.log { background: var(--bg); border: 1px solid var(--line); border-radius: 8
 .timeline .song:hover { outline: 1px solid #fff; z-index: 2; }
 dialog .cols2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 dialog input[type=time] { width: auto; }
+
+/* timeline zoom */
+.tl-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; font-size: 12px; }
+.zoom.inline { position: static; display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.timeline { height: 62px; touch-action: none; }
+.timeline.zoomed { cursor: grab; }
+.timeline.dragging { cursor: grabbing; }
+.timeline .song { top: 3px; height: 6px; overflow: hidden; }
+.timeline .song.wide { height: 16px; top: 2px; font-size: 10px; line-height: 16px; padding: 0 5px; color: #0b1020; font-weight: 700; white-space: nowrap; text-overflow: ellipsis; }
+.timeline .chunk { top: 20px; }
+.btn:disabled:hover { border-color: var(--line); }
+@media (max-width: 700px) { .tl-hint { display: none; } }

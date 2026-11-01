@@ -57,12 +57,21 @@
           <div class="spacer"></div>
           <span class="muted" id="dayInfo"></span>
         </div>
+        <div class="tl-bar">
+          <span class="muted tl-hint">Scroll to zoom the day · drag to pan · click to play</span>
+          <div class="zoom inline">
+            <button class="btn icon sm" id="tlOut" title="Zoom timeline out">−</button>
+            <span class="mono" id="tlZoomLvl">24 h</span>
+            <button class="btn icon sm" id="tlIn" title="Zoom timeline in">+</button>
+            <button class="btn sm" id="tlFit" title="Show the whole day">Day</button>
+          </div>
+        </div>
         <div class="timeline" id="timeline"><div class="head" id="tlHead"></div><div class="hover" id="tlHover"><span></span></div></div>
 
         <div class="wave-wrap" id="waveWrap">
           <canvas id="wave"></canvas>
           <div class="label" id="waveLabel"></div>
-          <div class="zoom" id="zoomCtl" hidden>
+          <div class="zoom" id="zoomCtl">
             <button class="btn icon sm" id="zoomOut" title="Zoom out (−)">−</button>
             <span class="mono" id="zoomLvl">1×</span>
             <button class="btn icon sm" id="zoomIn" title="Zoom in (+)">+</button>

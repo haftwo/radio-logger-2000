@@ -8,7 +8,7 @@ import time
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel, Field
@@ -44,8 +44,17 @@ app.add_middleware(SessionMiddleware, secret_key=auth.secret_key(), session_cook
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
-def page(name: str) -> FileResponse:
-    return FileResponse(os.path.join(STATIC, name), headers={"Cache-Control": "no-cache"})
+# Cache-busting: stamp script/style URLs with a version that changes whenever the static files do,
+# so browsers never mix a new page with an old cached dashboard.js after an update.
+ASSET_VERSION = str(int(max(os.path.getmtime(os.path.join(STATIC, f)) for f in os.listdir(STATIC))))
+
+
+def page(name: str) -> HTMLResponse:
+    with open(os.path.join(STATIC, name), encoding="utf-8") as f:
+        html = f.read()
+    for asset in ("app.css", "dashboard.js", "admin.js"):
+        html = html.replace(f"/static/{asset}\"", f"/static/{asset}?v={ASSET_VERSION}\"")
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
 
 
 # ---- pages ----------------------------------------------------------------------
