@@ -1,0 +1,14 @@
+services:
+  radio-logger:
+    image: ghcr.io/haftwo/radio-logger-2000:latest
+    container_name: radio-logger-2000
+    restart: unless-stopped
+    ports:
+      - "8765:8000"
+    environment:
+      TZ: Australia/Melbourne
+      RL_ADMIN_USER: admin
+      RL_ADMIN_PASSWORD: changeme   # only used to create the first admin
+    volumes:
+      - /mnt/user/appdata/radio-logger-2000:/config
+      - /mnt/user/radio-logs:/recordings

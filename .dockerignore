@@ -1,0 +1,8 @@
+.git
+.github
+__pycache__
+*.pyc
+data
+unraid
+*.zip
+README.md

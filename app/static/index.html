@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Radio Logger - 2000</title>
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" href="/static/favicon-32.png">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/"><img src="/static/logo.png" alt=""><div class="name">Radio Logger <span>- 2000</span></div></a>
+  <div class="spacer"></div>
+  <nav><a href="/" class="active">Dashboard</a><a href="/admin" id="adminLink" hidden>Admin</a><a href="/logout">Sign out</a></nav>
+  <div class="who" id="who"></div>
+</header>
+
+<main class="wrap">
+  <div class="stations" id="stations"></div>
+  <div id="noStreams" class="panel empty" hidden>No streams yet. <span id="noStreamsAdmin" hidden>Add one in <a href="/admin">Admin</a>.</span></div>
+
+  <div class="grid" id="main" hidden>
+    <aside>
+      <div class="panel station-card">
+        <div class="logo" id="stLogo"></div>
+        <h3 id="stName"></h3>
+        <div class="row"><span class="pill" id="stStatus"><span class="dot"></span><span>—</span></span><span class="pill" id="stMode">Replay</span></div>
+        <button class="btn live-btn" id="liveBtn">
+          <svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm-7.07-2.93 1.41 1.41A7.97 7.97 0 0 0 4 12c0 2.21.9 4.21 2.34 5.66l-1.41 1.41A9.96 9.96 0 0 1 2 12c0-2.76 1.12-5.26 2.93-7.07zm14.14 0A9.96 9.96 0 0 1 22 12c0 2.76-1.12 5.26-2.93 7.07l-1.41-1.41A7.97 7.97 0 0 0 20 12c0-2.21-.9-4.21-2.34-5.66z"/></svg>
+          <span>Listen live</span>
+        </button>
+      </div>
+      <div class="panel nowplaying" id="np">
+        <h2 id="npHead">Now playing</h2>
+        <div class="art" id="npArt"><svg viewBox="0 0 24 24"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg></div>
+        <div class="t" id="npTitle">—</div>
+        <div class="a" id="npArtist"></div>
+        <div class="al" id="npAlbum"></div>
+      </div>
+    </aside>
+
+    <section>
+      <div class="panel">
+        <div class="toolbar">
+          <button class="btn icon" id="prevDay" title="Previous day"><svg viewBox="0 0 24 24"><path d="M15.4 7.4 14 6l-6 6 6 6 1.4-1.4L10.8 12z"/></svg></button>
+          <input type="date" id="date">
+          <button class="btn icon" id="nextDay" title="Next day"><svg viewBox="0 0 24 24"><path d="M8.6 16.6 10 18l6-6-6-6-1.4 1.4 4.6 4.6z"/></svg></button>
+          <button class="btn" id="todayBtn">Today</button>
+          <div class="spacer"></div>
+          <span class="muted" id="dayInfo"></span>
+        </div>
+        <div class="timeline" id="timeline"><div class="head" id="tlHead"></div><div class="hover" id="tlHover"><span></span></div></div>
+
+        <div class="wave-wrap" id="waveWrap">
+          <canvas id="wave"></canvas>
+          <div class="label" id="waveLabel"></div>
+          <div class="loading" id="waveMsg">Pick a time on the timeline above, or press Listen live.</div>
+        </div>
+
+        <div class="transport">
+          <button class="btn icon" id="prevChunk" title="Previous chunk"><svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg></button>
+          <button class="btn icon" id="back" title="Back 10 s"><svg viewBox="0 0 24 24"><path d="M11 18V6l-8.5 6 8.5 6zm.5-6 8.5 6V6l-8.5 6z"/></svg></button>
+          <button class="btn big" id="play" title="Play / pause"><svg viewBox="0 0 24 24" id="playIcon"><path d="M8 5v14l11-7z"/></svg></button>
+          <button class="btn icon" id="fwd" title="Forward 10 s"><svg viewBox="0 0 24 24"><path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/></svg></button>
+          <button class="btn icon" id="nextChunk" title="Next chunk"><svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg></button>
+          <div>
+            <div class="clock" id="clock">--:--:--</div>
+            <div class="sub" id="clockSub">&nbsp;</div>
+          </div>
+          <div class="spacer"></div>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" class="muted"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
+          <input type="range" id="vol" min="0" max="1" step="0.01" value="0.9" title="Volume">
+          <a class="btn" id="dl" title="Download this chunk" hidden><svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>Chunk</a>
+        </div>
+      </div>
+
+      <div class="panel tracks" id="tracksPanel" hidden>
+        <h2>Played on this day</h2>
+        <div class="tracklist" id="tracklist"></div>
+      </div>
+    </section>
+  </div>
+</main>
+<div class="toast" id="toast"></div>
+<audio id="audio" preload="auto" crossorigin="use-credentials"></audio>
+<script src="/static/dashboard.js"></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>radio-logger-2000</Name>
+  <Repository>ghcr.io/haftwo/radio-logger-2000:latest</Repository>
+  <Registry>https://github.com/haftwo/radio-logger-2000/pkgs/container/radio-logger-2000</Registry>
+  <Project>https://github.com/haftwo/radio-logger-2000</Project>
+  <Icon>https://raw.githubusercontent.com/haftwo/radio-logger-2000/main/app/static/logo.png</Icon>
+  <Network>bridge</Network>
+  <Privileged>false</Privileged>
+  <Overview>Radio Logger - 2000: records internet radio streams in chunks, with a web dashboard for replay, waveform, live listening and track artwork.</Overview>
+  <Category>MediaServer:Music Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8000]/</WebUI>
+  <Config Name="Web UI port" Target="8000" Default="8765" Mode="tcp" Type="Port" Display="always" Required="true">8765</Config>
+  <Config Name="Config / database" Target="/config" Default="/mnt/user/appdata/radio-logger-2000" Mode="rw" Type="Path" Display="always" Required="true">/mnt/user/appdata/radio-logger-2000</Config>
+  <Config Name="Recordings" Target="/recordings" Default="/mnt/user/radio-logs" Mode="rw" Type="Path" Display="always" Required="true">/mnt/user/radio-logs</Config>
+  <Config Name="Time zone" Target="TZ" Default="Australia/Melbourne" Type="Variable" Display="always" Required="true">Australia/Melbourne</Config>
+  <Config Name="First admin username" Target="RL_ADMIN_USER" Default="admin" Type="Variable" Display="always" Required="false">admin</Config>
+  <Config Name="First admin password" Target="RL_ADMIN_PASSWORD" Default="changeme" Type="Variable" Display="always" Required="false" Mask="true">changeme</Config>
+</Container>

@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin · Radio Logger - 2000</title>
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" href="/static/favicon-32.png">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/"><img src="/static/logo.png" alt=""><div class="name">Radio Logger <span>- 2000</span></div></a>
+  <div class="spacer"></div>
+  <nav><a href="/">Dashboard</a><a href="/admin" class="active">Admin</a><a href="/logout">Sign out</a></nav>
+  <div class="who" id="who"></div>
+</header>
+
+<main class="wrap">
+  <div class="tabs">
+    <button class="active" data-tab="streams">Streams</button>
+    <button data-tab="recording">Recording</button>
+    <button data-tab="users">Users</button>
+  </div>
+
+  <!-- streams -->
+  <section class="tab active" id="tab-streams">
+    <div class="panel">
+      <div class="toolbar" style="display:flex;align-items:center;margin-bottom:12px">
+        <h2 style="margin:0">Streams</h2><div style="flex:1"></div>
+        <button class="btn primary" id="addStream">+ Add stream</button>
+      </div>
+      <table class="list">
+        <thead><tr><th>Logo</th><th>Station</th><th>Status</th><th>Type</th><th></th></tr></thead>
+        <tbody id="streamRows"></tbody>
+      </table>
+      <p class="hint">Click a logo to upload a new one. Deleting a stream leaves its recordings on disk.</p>
+    </div>
+  </section>
+
+  <!-- recording settings -->
+  <section class="tab" id="tab-recording">
+    <div class="cols">
+      <form class="panel" id="settingsForm">
+        <h2>Recording settings</h2>
+        <label class="field"><span>Recordings folder (inside the container)</span>
+          <input type="text" name="recordings_path" required>
+          <div class="hint">Map this to an Unraid share, e.g. <span class="mono">/mnt/user/radio-logs</span> → <span class="mono">/recordings</span>. Changing it restarts all recorders; existing files aren't moved.</div>
+        </label>
+        <label class="field"><span>Keep audio for (days)</span>
+          <input type="number" name="retention_days" min="1" max="3650" required>
+          <div class="hint">Chunks and track history older than this are deleted hourly.</div>
+        </label>
+        <label class="field"><span>Chunk size</span>
+          <select name="chunk_minutes">
+            <option value="1">1 minute</option><option value="5">5 minutes</option><option value="10">10 minutes</option>
+            <option value="15">15 minutes</option><option value="30">30 minutes</option><option value="60">60 minutes</option>
+          </select>
+          <div class="hint">Files are split on clock boundaries (e.g. :00, :15, :30, :45).</div>
+        </label>
+        <label class="field"><span>Recording bitrate (kbps MP3)</span>
+          <select name="bitrate_kbps">
+            <option>64</option><option>96</option><option>128</option><option>192</option><option>256</option><option>320</option>
+          </select>
+        </label>
+        <label class="field"><span>Shazam check interval (seconds)</span>
+          <input type="number" name="shazam_interval" min="30" max="3600" required>
+          <div class="hint">Only used by music stations set to the Shazam source.</div>
+        </label>
+        <button class="btn primary" type="submit">Save settings</button>
+      </form>
+      <div class="panel">
+        <h2>Storage</h2>
+        <div class="stat"><span>Used by recordings</span><span class="mono" id="dUsed">—</span></div>
+        <div class="stat"><span>Free on volume</span><span class="mono" id="dFree">—</span></div>
+        <div class="stat"><span>Volume size</span><span class="mono" id="dTotal">—</span></div>
+        <div class="bar"><div id="dBar" style="width:0"></div></div>
+        <p class="hint" id="dEst"></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- users -->
+  <section class="tab" id="tab-users">
+    <div class="panel">
+      <div style="display:flex;align-items:center;margin-bottom:12px">
+        <h2 style="margin:0">Users</h2><div style="flex:1"></div>
+        <button class="btn primary" id="addUser">+ Add user</button>
+      </div>
+      <table class="list">
+        <thead><tr><th>Username</th><th>Role</th><th>Created</th><th></th></tr></thead>
+        <tbody id="userRows"></tbody>
+      </table>
+      <p class="hint">Viewers can replay and listen live. Admins can also manage streams, settings and users.</p>
+    </div>
+  </section>
+</main>
+
+<dialog id="streamDlg">
+  <form method="dialog" id="streamForm">
+    <h3 id="streamDlgTitle">Add stream</h3>
+    <label class="field"><span>Station name</span><input type="text" name="name" required maxlength="80"></label>
+    <label class="field"><span>Stream URL</span><input type="text" name="url" required placeholder="https://… (.mp3, .aac, Icecast, or HLS .m3u8)"></label>
+    <label class="check"><input type="checkbox" name="enabled" checked> Recording enabled</label>
+    <label class="check"><input type="checkbox" name="is_music"> Music station (log tracks and show artwork)</label>
+    <label class="field" id="metaField"><span>Track detection</span>
+      <select name="meta_source">
+        <option value="icy">Stream metadata (Icecast/Shoutcast titles)</option>
+        <option value="shazam">Shazam audio recognition (works with HLS)</option>
+        <option value="none">None</option>
+      </select>
+    </label>
+    <div id="streamLog" hidden><span class="muted" style="font-size:13px">Recorder log</span><pre class="log"></pre></div>
+    <div class="actions">
+      <button class="btn" value="cancel" formnovalidate>Cancel</button>
+      <button class="btn primary" id="streamSave" value="save">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="userDlg">
+  <form method="dialog" id="userForm">
+    <h3 id="userDlgTitle">Add user</h3>
+    <label class="field"><span>Username</span><input type="text" name="username" required maxlength="40" autocomplete="off"></label>
+    <label class="field"><span id="pwLabel">Password</span><input type="password" name="password" autocomplete="new-password" minlength="8"></label>
+    <label class="field"><span>Role</span><select name="role"><option value="viewer">Viewer</option><option value="admin">Admin</option></select></label>
+    <div class="actions">
+      <button class="btn" value="cancel" formnovalidate>Cancel</button>
+      <button class="btn primary" value="save">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<input type="file" id="logoInput" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+<div class="toast" id="toast"></div>
+<script src="/static/admin.js"></script>
+</body>
+</html>

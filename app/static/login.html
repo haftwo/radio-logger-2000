@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in · Radio Logger - 2000</title>
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" href="/static/favicon-32.png">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="login">
+  <div class="panel card">
+    <img src="/static/logo.png" alt="">
+    <h1>Radio Logger - 2000</h1>
+    <form method="post" action="/login">
+      <div class="err" id="err">Wrong username or password.</div>
+      <label class="field"><span>Username</span><input type="text" name="username" autocomplete="username" required autofocus></label>
+      <label class="field"><span>Password</span><input type="password" name="password" autocomplete="current-password" required></label>
+      <button class="btn primary" style="width:100%" type="submit">Sign in</button>
+    </form>
+  </div>
+<script>if (location.search.includes('error')) document.getElementById('err').style.display = 'block';</script>
+</body>
+</html>
