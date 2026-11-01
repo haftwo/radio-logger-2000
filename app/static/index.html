@@ -68,6 +68,7 @@
         </div>
         <div class="timeline" id="timeline"><div class="head" id="tlHead"></div><div class="hover" id="tlHover"><span></span></div></div>
 
+        <div class="wave-row">
         <div class="wave-wrap" id="waveWrap">
           <canvas id="wave"></canvas>
           <div class="label" id="waveLabel"></div>
@@ -79,6 +80,10 @@
           </div>
           <div class="hint wavehelp" id="waveHelp" hidden>Scroll or +/− to zoom · drag to pan · click to seek</div>
           <div class="loading" id="waveMsg">Pick a time on the timeline above, or press Listen live.</div>
+        </div>
+          <div class="vu" title="Audio level (dBFS): bars show loudness, lines show peaks, red light = clipping">
+            <canvas id="vu"></canvas>
+          </div>
         </div>
 
         <div class="transport">

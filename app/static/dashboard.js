@@ -336,14 +336,83 @@
       const src = S.actx.createMediaElementSource(audio);
       S.analyser = S.actx.createAnalyser(); S.analyser.fftSize = 2048;
       src.connect(S.analyser); S.analyser.connect(S.actx.destination);
+      // per-channel analysers for the level meter
+      const split = S.actx.createChannelSplitter(2);
+      src.connect(split);
+      S.meterL = S.actx.createAnalyser(); S.meterR = S.actx.createAnalyser();
+      S.meterL.fftSize = S.meterR.fftSize = 2048;
+      split.connect(S.meterL, 0); split.connect(S.meterR, 1);
     } catch (e) { S.actx = null; }
   }
 
   // ---------- drawing ----------
   function frame() {
     drawWave();
+    drawVU();
     updateHeads();
     requestAnimationFrame(frame);
+  }
+
+  // ---------- level meter (dBFS, RMS bars with VU-style ballistics + peak hold) ----------
+  const VU = { min: -48, max: 3, rms: [-120, -120], peak: [-120, -120], hold: [-120, -120], holdAt: [0, 0], clipAt: 0, last: 0,
+    buf: new Float32Array(2048) };
+  const VU_TICKS = [0, -6, -12, -20, -30, -40];
+  function measure(an) {
+    an.getFloatTimeDomainData(VU.buf);
+    let sum = 0, pk = 0;
+    for (let i = 0; i < VU.buf.length; i++) { const v = VU.buf[i]; sum += v * v; const a = Math.abs(v); if (a > pk) pk = a; }
+    const db = (x) => (x > 0 ? 20 * Math.log10(x) : -120);
+    return [db(Math.sqrt(sum / VU.buf.length)), db(pk), pk];
+  }
+  function drawVU() {
+    const cv = $('vu'); if (!cv) return;
+    const [g, w, h] = sizeCanvas(cv);
+    const now = performance.now(), dt = Math.min(0.1, (now - (VU.last || now)) / 1000); VU.last = now;
+    const active = S.meterL && (S.mode === 'replay' || S.mode === 'live') && !audio.paused;
+    let ch = [[-120, -120, 0], [-120, -120, 0]];
+    if (active) {
+      ch = [measure(S.meterL), measure(S.meterR)];
+      if (ch[1][0] < -100 && ch[0][0] > -100) ch[1] = ch[0];   // mono source: show it on both bars
+    }
+    const rise = 1 - Math.exp(-dt / 0.3), fall = 1 - Math.exp(-dt / 0.3);   // ~300 ms VU integration
+    for (let i = 0; i < 2; i++) {
+      const tgt = ch[i][0];
+      VU.rms[i] += (tgt - VU.rms[i]) * (tgt > VU.rms[i] ? rise : fall);
+      VU.peak[i] = Math.max(ch[i][1], VU.peak[i] - dt * 20);             // peak falls 20 dB/s
+      if (ch[i][1] >= VU.hold[i] || now - VU.holdAt[i] > 1500) { VU.hold[i] = ch[i][1]; VU.holdAt[i] = now; }
+      if (ch[i][2] >= 0.999) VU.clipAt = now;
+    }
+    g.clearRect(0, 0, w, h);
+    const top = 16, bot = h - 8, span = bot - top;
+    const y = (db) => top + span * (1 - (Math.max(VU.min, Math.min(VU.max, db)) - VU.min) / (VU.max - VU.min));
+    // scale
+    g.font = '9px ui-monospace, monospace'; g.textAlign = 'right'; g.textBaseline = 'middle';
+    VU_TICKS.forEach((t) => { g.fillStyle = '#8f9bc4'; g.fillText(t === 0 ? '0' : String(t), 22, y(t)); g.fillStyle = '#27335e'; g.fillRect(26, y(t), w - 32, 1); });
+    // bars
+    const bw = Math.floor((w - 36) / 2) - 2, xs = [28, 28 + bw + 4];
+    const grad = g.createLinearGradient(0, bot, 0, top);
+    const stop = (db) => (db - VU.min) / (VU.max - VU.min);
+    grad.addColorStop(0, '#1f9e8f'); grad.addColorStop(stop(-18), '#2ec4b6'); grad.addColorStop(stop(-9), '#3ddc97');
+    grad.addColorStop(stop(-6), '#ffd166'); grad.addColorStop(stop(-3), '#ffb547'); grad.addColorStop(stop(0), '#ff4d5e'); grad.addColorStop(1, '#ff4d5e');
+    for (let i = 0; i < 2; i++) {
+      g.fillStyle = '#0b1020'; g.fillRect(xs[i], top, bw, span);
+      const yr = y(VU.rms[i]);
+      g.fillStyle = grad; g.fillRect(xs[i], yr, bw, bot - yr);
+      // segment gaps for an LED look
+      g.fillStyle = '#0b1020'; for (let yy = bot - 3; yy > top; yy -= 4) g.fillRect(xs[i], yy, bw, 1);
+      // fast peak and held peak
+      g.fillStyle = 'rgba(255,255,255,.55)'; g.fillRect(xs[i], y(VU.peak[i]), bw, 1);
+      const hc = VU.hold[i] > -3 ? '#ff4d5e' : VU.hold[i] > -9 ? '#ffd166' : '#e8ecf8';
+      if (VU.hold[i] > VU.min) { g.fillStyle = hc; g.fillRect(xs[i], y(VU.hold[i]) - 1, bw, 2); }
+    }
+    // L / R labels and clip light
+    g.textAlign = 'center'; g.fillStyle = '#8f9bc4'; g.font = '9px system-ui, sans-serif';
+    g.fillText('L', xs[0] + bw / 2, 8); g.fillText('R', xs[1] + bw / 2, 8);
+    const clip = now - VU.clipAt < 1500;
+    g.fillStyle = clip ? '#ff4d5e' : '#2a1820'; g.beginPath(); g.arc(12, 8, 4, 0, Math.PI * 2); g.fill();
+    $('vu').parentElement.title = active
+      ? `L ${VU.rms[0].toFixed(1)} dB RMS / ${VU.hold[0].toFixed(1)} peak · R ${VU.rms[1].toFixed(1)} dB RMS / ${VU.hold[1].toFixed(1)} peak${clip ? ' · CLIPPING' : ''}`
+      : 'Audio level (dBFS): bars show loudness, lines show peaks, red light = clipping';
   }
 
   function sizeCanvas(cv) {
