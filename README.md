@@ -8,6 +8,8 @@ Records internet radio streams to disk in clock-aligned chunks and gives you a w
 - **Song tags** – every detected song is tagged automatically with artist, title, album, genre and year (from Shazam and the iTunes catalogue) and shown as a coloured block on the timeline and a labelled band on the waveform. Fix a wrong match or add a missed song with **Edit** / **+ Tag song at playhead**; corrected songs get fresh artwork and tags.
 - **Station details** – the station name, genre and description the stream announces (ICY headers, or the HLS/TS service name) are picked up automatically; leave the name blank when adding a stream, or use **Detect from stream**.
 - **Music stations** – show the cover art and track for whatever moment you're replaying, plus a "Played on this day" list you can click to jump to a song. Track changes are marked on the timeline and waveform.
+  - *Top played* tab: the top 10 songs for the selected day and for the 7 days ending on it, with play counts. Click a song to jump to the last time it played.
+  - *Export*: download played songs as CSV (date, time, station, artist, title, album, tags, duration, source) for the day, the 7 days to that day, or everything logged.
 - **Admin** (admin role only)
   - *Streams*: add/edit/delete, enable/disable, restart a recorder, upload a station logo (click the logo), see the recorder log.
   - *Recording*: recordings folder, how long to keep audio, chunk size (1–60 min), MP3 bitrate, Shazam interval, and disk usage.

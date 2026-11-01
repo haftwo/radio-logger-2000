@@ -179,3 +179,39 @@ def tracks_between(stream_id: int, start: float, end: float) -> list[dict]:
     return [track_out(r) for r in q(
         "SELECT id, ts, artist, title, album, artwork_url, tags, duration, source FROM tracks "
         "WHERE stream_id=? AND ts>=? AND ts<? ORDER BY ts", (stream_id, start, end))]
+
+
+def top_tracks(stream_id: int, start: float, end: float, limit: int = 10) -> dict:
+    """Most-played songs in [start, end), grouped case-insensitively by artist + title.
+
+    Grouping is done in Python because SQLite's LOWER() only folds ASCII (BEYONCÉ != Beyoncé).
+    """
+    rows = q("SELECT ts, artist, title, artwork_url FROM tracks "
+             "WHERE stream_id=? AND ts>=? AND ts<? AND COALESCE(title,'')<>'' ORDER BY ts", (stream_id, start, end))
+    songs: dict[tuple, dict] = {}
+    for r in rows:
+        key = ((r["artist"] or "").strip().casefold(), r["title"].strip().casefold())
+        s = songs.get(key)
+        if not s:
+            s = songs[key] = {"artist": r["artist"], "title": r["title"], "plays": 0,
+                              "first_ts": r["ts"], "last_ts": r["ts"], "artwork_url": None, "_names": {}}
+        s["plays"] += 1
+        name = (r["artist"], r["title"])
+        s["_names"][name] = s["_names"].get(name, 0) + 1
+        s["last_ts"] = r["ts"]
+        if r["artwork_url"]:
+            s["artwork_url"] = r["artwork_url"]  # rows are in time order, so this keeps the latest artwork
+    top = sorted(songs.values(), key=lambda s: (-s["plays"], -s["last_ts"]))[:limit]
+    for s in top:  # show the spelling used most often
+        s["artist"], s["title"] = max(s.pop("_names").items(), key=lambda kv: kv[1])[0]
+    return {"start": start, "end": end, "plays": len(rows), "songs": len(songs), "top": top}
+
+
+def tracks_for_export(stream_id: int, start: float | None = None, end: float | None = None) -> list[dict]:
+    sql = "SELECT ts, artist, title, album, tags, duration, source FROM tracks WHERE stream_id=?"
+    args: list = [stream_id]
+    if start is not None:
+        sql += " AND ts>=?"; args.append(start)
+    if end is not None:
+        sql += " AND ts<?"; args.append(end)
+    return q(sql + " ORDER BY ts", tuple(args))

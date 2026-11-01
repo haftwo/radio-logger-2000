@@ -124,7 +124,9 @@
     if (!keepPlayback && S.mode === 'replay') stopPlayback();
     renderTimeline();
     renderTracks();
-    if (!S.stream.is_music) loadTranscript(keepPlayback);
+    updateExportLinks();
+    if (S.stream.is_music) loadCharts();
+    else loadTranscript(keepPlayback);
     const hrs = S.day.chunks.reduce((a, c) => a + chunkLen(c), 0) / 3600;
     $('dayInfo').textContent = S.day.chunks.length
       ? `${S.day.chunks.length} chunks · ${hrs.toFixed(1)} h recorded${S.day.tracks.length ? ` · ${S.day.tracks.length} tracks` : ''}`
@@ -216,6 +218,66 @@
       if (e.target.closest('[data-edit]')) return openTrack(S.day.tracks.find((t) => t.id === Number(r.dataset.id)));
       playAt(Number(r.dataset.ts) - 2);
     }));
+  }
+
+  // ---------- track panel tabs: played list | top played ----------
+  S.trTab = store.get('trTab') === 'charts' ? 'charts' : 'played';
+  function setTrackTab(name) {
+    S.trTab = name; store.set('trTab', name);
+    document.querySelectorAll('#tracksPanel .ptab').forEach((b) => {
+      const on = b.dataset.tab === name;
+      b.classList.toggle('active', on); b.setAttribute('aria-selected', on);
+    });
+    $('tracklist').hidden = name !== 'played';
+    $('charts').hidden = name !== 'charts';
+    $('tagHere').hidden = name !== 'played';
+    if (name === 'charts') loadCharts();
+  }
+  document.querySelectorAll('#tracksPanel .ptab').forEach((b) => (b.onclick = () => setTrackTab(b.dataset.tab)));
+  setTrackTab(S.trTab);
+
+  function updateExportLinks() {
+    if (!S.stream || !S.date) return;
+    const base = `/api/streams/${S.stream.id}/tracks.csv`;
+    $('expDay').href = `${base}?range=day&date=${S.date}`;
+    $('expWeek').href = `${base}?range=week&date=${S.date}`;
+    $('expAll').href = `${base}?range=all`;
+  }
+  $('exportMenu').addEventListener('click', (e) => { if (e.target.closest('a')) $('exportMenu').open = false; });
+  document.addEventListener('click', (e) => { if (!e.target.closest('#exportMenu')) $('exportMenu').open = false; });
+
+  async function loadCharts() {
+    if (!S.stream || !S.stream.is_music || S.trTab !== 'charts') return;
+    const want = `${S.stream.id}|${S.date}`;
+    let c;
+    try { c = await api(`/api/streams/${S.stream.id}/charts?date=${S.date}`); } catch (e) { return toast(e.message, true); }
+    if (want !== `${S.stream.id}|${S.date}`) return; // user moved on while this was loading
+    renderChart($('chDay'), $('chDayMeta'), c.day, 'this day');
+    const wk = `${fmtShort(c.week.start)} – ${fmtShort(c.week.end - 1)}`;
+    renderChart($('chWeek'), $('chWeekMeta'), c.week, 'these 7 days', wk);
+  }
+  const fmtShort = (ts) => { const [, m, d] = fmtDate(ts).split('-'); return `${Number(d)}/${Number(m)}`; };
+
+  function renderChart(list, meta, data, label, range) {
+    meta.textContent = (range ? range + ' · ' : '') + (data.plays ? `${data.plays} plays · ${data.songs} songs` : '');
+    if (!data.top.length) { list.innerHTML = `<li class="empty">No songs logged ${label}.</li>`; return; }
+    const max = data.top[0].plays;
+    list.innerHTML = data.top.map((t, i) =>
+      `<li class="crow" data-ts="${t.last_ts}" title="Play the most recent time this was played (${fmtDate(t.last_ts)} ${fmtHM(t.last_ts)})">
+         <div class="rk">${i + 1}</div>
+         <div class="th" style="${t.artwork_url ? `background-image:url('${esc(t.artwork_url)}')` : ''}"></div>
+         <div style="min-width:0"><div class="tt">${esc(t.title)}</div><div class="ta">${esc(t.artist)}</div>
+           <div class="bar" style="width:${Math.max(6, (t.plays / max) * 100)}%"></div></div>
+         <div class="pc"><b>${t.plays}</b> ${t.plays === 1 ? 'play' : 'plays'}</div>
+       </li>`).join('');
+    list.querySelectorAll('.crow').forEach((r) => (r.onclick = () => jumpTo(Number(r.dataset.ts))));
+  }
+
+  // play from any moment, switching day if needed
+  async function jumpTo(ts) {
+    const d = fmtDate(ts);
+    if (d !== S.date) await loadDay(d);
+    playAt(ts - 2);
   }
 
   async function refreshTick() {

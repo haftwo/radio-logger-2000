@@ -99,9 +99,35 @@
       </div>
 
       <div class="panel tracks" id="tracksPanel" hidden>
-        <div class="panel-head"><h2>Played on this day</h2>
-          <button class="btn sm" id="tagHere" title="Add a song at the current playback position">+ Tag song at playhead</button></div>
-        <div class="tracklist" id="tracklist"></div>
+        <div class="panel-head">
+          <div class="ptabs" role="tablist">
+            <button class="ptab active" role="tab" data-tab="played" aria-selected="true">Played on this day</button>
+            <button class="ptab" role="tab" data-tab="charts" aria-selected="false">Top played</button>
+          </div>
+          <div class="head-actions">
+            <button class="btn sm" id="tagHere" title="Add a song at the current playback position">+ Tag song at playhead</button>
+            <details class="menu" id="exportMenu">
+              <summary class="btn sm" title="Download the played songs as a spreadsheet (CSV)">
+                <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>Export</summary>
+              <div class="menu-list">
+                <a id="expDay" download>This day</a>
+                <a id="expWeek" download>7 days to this day</a>
+                <a id="expAll" download>Everything logged</a>
+              </div>
+            </details>
+          </div>
+        </div>
+        <div class="tracklist" id="tracklist" role="tabpanel"></div>
+        <div class="charts" id="charts" role="tabpanel" hidden>
+          <div class="chart-col">
+            <div class="chart-head"><h3>Top 10 · this day</h3><span class="muted" id="chDayMeta"></span></div>
+            <ol class="chart" id="chDay"></ol>
+          </div>
+          <div class="chart-col">
+            <div class="chart-head"><h3>Top 10 · last 7 days</h3><span class="muted" id="chWeekMeta"></span></div>
+            <ol class="chart" id="chWeek"></ol>
+          </div>
+        </div>
       </div>
       <div class="panel tracks" id="transcriptPanel" hidden>
         <div class="panel-head"><h2>Transcript</h2><span class="muted" id="trStatus" style="font-size:12px"></span></div>

@@ -1,5 +1,6 @@
 """Radio Logger - 2000: web app entry point."""
 import asyncio
+import csv
 import datetime as dt
 import io
 import logging
@@ -221,6 +222,60 @@ def now_playing(stream_id: int, user=Depends(auth.require_user)):
     get_stream_or_404(stream_id)
     t = db.last_track(stream_id)
     return db.track_out(t) if t else {}
+
+
+def local_bounds(day: dt.date, days: int = 1) -> tuple[float, float]:
+    """Local-midnight timestamps for `days` days ending on (and including) `day`."""
+    first = day - dt.timedelta(days=days - 1)
+    return (dt.datetime.combine(first, dt.time()).timestamp(),
+            dt.datetime.combine(day + dt.timedelta(days=1), dt.time()).timestamp())
+
+
+def parse_day_or_400(date: str) -> dt.date:
+    try:
+        return audio.parse_date(date)
+    except ValueError:
+        raise HTTPException(400, "date must be YYYY-MM-DD")
+
+
+@app.get("/api/streams/{stream_id}/charts")
+def stream_charts(stream_id: int, date: str, limit: int = 10, user=Depends(auth.require_user)):
+    """Top songs for the day and for the 7 days ending on that day."""
+    get_stream_or_404(stream_id)
+    day = parse_day_or_400(date)
+    limit = max(1, min(limit, 50))
+    return {"date": date,
+            "day": db.top_tracks(stream_id, *local_bounds(day, 1), limit),
+            "week": db.top_tracks(stream_id, *local_bounds(day, 7), limit)}
+
+
+@app.get("/api/streams/{stream_id}/tracks.csv")
+def export_tracks(stream_id: int, range: str = "day", date: str | None = None, user=Depends(auth.require_user)):
+    """Download played songs as CSV. range = day | week (7 days ending on date) | all."""
+    s = get_stream_or_404(stream_id)
+    if range not in ("day", "week", "all"):
+        raise HTTPException(400, "range must be day, week or all")
+    if range == "all":
+        rows, label = db.tracks_for_export(stream_id), "all"
+    else:
+        if not date:
+            raise HTTPException(400, "date required")
+        day = parse_day_or_400(date)
+        rows = db.tracks_for_export(stream_id, *local_bounds(day, 7 if range == "week" else 1))
+        label = date if range == "day" else f"week-to-{date}"
+
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Date", "Time", "Station", "Artist", "Title", "Album", "Tags", "Duration (s)", "Source"])
+    for r in rows:
+        when = dt.datetime.fromtimestamp(r["ts"])
+        w.writerow([when.strftime("%Y-%m-%d"), when.strftime("%H:%M:%S"), s["name"], r["artist"] or "",
+                    r["title"] or "", r["album"] or "", (r["tags"] or "").replace(",", "; "),
+                    round(r["duration"]) if r["duration"] else "", r["source"] or ""])
+    filename = f"{s['slug']}-played-{label}.csv"
+    # BOM so Excel opens accented artist names correctly
+    return StreamingResponse(iter(["﻿" + buf.getvalue()]), media_type="text/csv; charset=utf-8",
+                             headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 @app.get("/api/streams/{stream_id}/audio/{date}/{name}")
