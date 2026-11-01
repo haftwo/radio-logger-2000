@@ -29,6 +29,7 @@
     document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.id === 'tab-' + b.dataset.tab));
     if (b.dataset.tab === 'recording') loadSettings();
     if (b.dataset.tab === 'sso') loadSSO();
+    if (b.dataset.tab === 'transcription') loadWhisper();
   }));
 
   // ---------- streams ----------
@@ -98,12 +99,14 @@
     $('detectInfo').textContent = '';
     f.enabled.checked = s ? s.enabled : true; f.is_music.checked = s ? s.is_music : false;
     f.meta_source.value = s ? s.meta_source : 'icy';
+    f.transcribe.checked = s ? s.transcribe !== false : true;
+    $('transcribeField').hidden = f.is_music.checked;
     $('metaField').hidden = !f.is_music.checked;
     const lg = s && s.detail.log.length;
     $('streamLog').hidden = !lg; if (lg) $('streamLog').querySelector('pre').textContent = s.detail.log.join('\n');
     $('streamDlg').showModal();
   }
-  $('streamForm').is_music.addEventListener('change', (e) => ($('metaField').hidden = !e.target.checked));
+  $('streamForm').is_music.addEventListener('change', (e) => { $('metaField').hidden = !e.target.checked; $('transcribeField').hidden = e.target.checked; });
   $('addStream').onclick = () => openStream(null);
   $('detectBtn').onclick = async () => {
     const f = $('streamForm'), url = f.url.value.trim();
@@ -125,7 +128,7 @@
     if (e.submitter && e.submitter.value === 'cancel') return;
     e.preventDefault();
     const f = e.target;
-    const body = { name: f.name.value, url: f.url.value, enabled: f.enabled.checked, is_music: f.is_music.checked, meta_source: f.meta_source.value };
+    const body = { name: f.name.value, url: f.url.value, enabled: f.enabled.checked, is_music: f.is_music.checked, meta_source: f.meta_source.value, transcribe: f.transcribe.checked };
     try {
       if (editing) await api(`/api/admin/streams/${editing.id}`, 'PUT', body);
       else await api('/api/admin/streams', 'POST', body);
@@ -206,6 +209,61 @@
       $('userDlg').close(); toast(editingUser && editingUser.auth === 'sso' ? 'Saved. Microsoft re-syncs the role at next sign-in' : 'User saved'); loadUsers();
     } catch (er) { toast(er.message, true); }
   });
+
+  // ---------- transcription ----------
+  const W_KEYS = ['whisper_api', 'whisper_url', 'whisper_model', 'whisper_language', 'whisper_backfill_hours', 'whisper_keywords', 'whisper_timeout'];
+  const ago = (t) => { if (!t) return ''; const s = Math.round(Date.now() / 1000 - t); return s < 90 ? `${s}s ago` : `${Math.round(s / 60)} min ago`; };
+  function whisperApiChanged() {
+    const f = $('whisperForm'), api = f.whisper_api.value;
+    $('modelField').hidden = api !== 'openai';
+    $('keyField').hidden = api === 'wyoming';
+    f.whisper_url.placeholder = { openai: 'http://192.168.1.50:8000', asr: 'http://192.168.1.50:9000', wyoming: 'tcp://192.168.1.50:10300' }[api];
+    $('urlHint').textContent = { openai: 'Base address of the server. /v1/audio/transcriptions is added automatically.',
+      asr: 'Base address of the server. /asr is added automatically.',
+      wyoming: 'tcp://host:port of the Wyoming server.' }[api];
+  }
+  async function loadWhisper(statusOnly) {
+    const c = await api('/api/admin/transcription'), f = $('whisperForm');
+    if (!statusOnly) {
+      f.whisper_enabled.checked = c.whisper_enabled;
+      W_KEYS.forEach((k) => (f[k].value = c[k] ?? ''));
+      f.whisper_api_key.value = '';
+      $('keyState').textContent = c.key_set ? '· saved' : '';
+      whisperApiChanged();
+    }
+    const st = c.state;
+    $('wBusy').textContent = st.busy || (c.whisper_enabled ? 'idle' : 'off');
+    $('wQueue').textContent = c.whisper_enabled ? `${st.queue} chunk(s)` : '—';
+    $('wDone').textContent = `${(c.counts.done || 0) + (c.counts.empty || 0)} · ${c.segments} lines`;
+    $('wSecs').textContent = st.last_seconds ? `${st.last_seconds}s ${st.last_ok_at ? '(' + ago(st.last_ok_at) + ')' : ''}` : '—';
+    $('wFail').textContent = c.counts.error || 0;
+    $('wErr').textContent = st.last_error ? `Last error ${ago(st.last_error_at)}: ${st.last_error}` : '';
+    $('whisperRetry').hidden = !c.counts.error;
+    $('wTalk').textContent = c.talk_streams.length ? `Transcribing: ${c.talk_streams.join(', ')}` : 'No talk stations are set to transcribe yet. Untick "Music station" on a stream.';
+  }
+  function whisperBody() {
+    const f = $('whisperForm'), b = { whisper_enabled: f.whisper_enabled.checked, whisper_api_key: f.whisper_api_key.value.trim() || null };
+    W_KEYS.forEach((k) => (b[k] = f[k].value.trim()));
+    b.whisper_backfill_hours = Number(b.whisper_backfill_hours) || 24; b.whisper_timeout = Number(b.whisper_timeout) || 900;
+    return b;
+  }
+  $('whisperForm').whisper_api.addEventListener('change', whisperApiChanged);
+  $('whisperForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try { await api('/api/admin/transcription', 'PUT', whisperBody()); toast('Transcription settings saved'); loadWhisper(); }
+    catch (er) { toast(er.message, true); }
+  });
+  $('whisperTest').onclick = async () => {
+    const out = $('whisperTestResult'), btn = $('whisperTest');
+    btn.disabled = true; btn.textContent = 'Testing…'; out.textContent = ''; out.style.color = '';
+    try {
+      const r = await api('/api/admin/transcription/test', 'POST', whisperBody());
+      out.textContent = `✓ Server answered in ${r.seconds}s. ${r.text}`; out.style.color = 'var(--ok)';
+    } catch (er) { out.textContent = er.message; out.style.color = 'var(--live)'; }
+    finally { btn.disabled = false; btn.textContent = 'Test connection'; }
+  };
+  $('whisperRetry').onclick = async () => { await api('/api/admin/transcription/retry', 'POST'); toast('Failed chunks will be retried'); loadWhisper(true); };
+  setInterval(() => { if ($('tab-transcription').classList.contains('active')) loadWhisper(true); }, 5000);
 
   // ---------- single sign-on ----------
   async function loadSSO() {

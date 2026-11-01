@@ -52,6 +52,24 @@ Storage guide: 128 kbps ≈ 1.4 GB per station per day.
 
 Point a public hostname (e.g. `radiologger.example.com`) at `http://radio-logger-2000:8000` (if cloudflared shares a Docker network with it) or `http://<unraid-ip>:8765`. Run only **one** uvicorn worker — the recorders live inside the app process.
 
+## Transcripts for talk stations (local Whisper)
+
+Talk stations (streams not marked "Music station") show a **Transcript** panel instead of
+"Played on this day". Admin → **Transcription** points the logger at a Whisper server on your
+network:
+
+| Server | Type | Address |
+|---|---|---|
+| Speaches / faster-whisper-server / LocalAI | OpenAI-compatible | `http://<unraid-ip>:8000` |
+| openai-whisper-asr-webservice | whisper-asr-webservice | `http://<unraid-ip>:9000` |
+| linuxserver/faster-whisper (Home Assistant) | Wyoming | `tcp://<unraid-ip>:10300` (15 s timing blocks) |
+
+Finished chunks are transcribed newest first, then the backlog within the look-back window.
+Lines are timestamped and searchable (full-text, prefix and "exact phrase", this day or all days).
+Names, places and frequent topics are tagged automatically, plus a watch-list of your own keywords.
+Clicking a line (or a search result on another day) moves the timeline and waveform there and plays.
+Search hits are marked on the timeline. Transcripts follow the same retention as the audio.
+
 ## Single sign-on (Microsoft Entra ID / Azure AD)
 
 Admin → **Single sign-on** adds a "Sign in with Microsoft" button using OpenID Connect

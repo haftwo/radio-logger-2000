@@ -103,6 +103,16 @@
           <button class="btn sm" id="tagHere" title="Add a song at the current playback position">+ Tag song at playhead</button></div>
         <div class="tracklist" id="tracklist"></div>
       </div>
+      <div class="panel tracks" id="transcriptPanel" hidden>
+        <div class="panel-head"><h2>Transcript</h2><span class="muted" id="trStatus" style="font-size:12px"></span></div>
+        <div class="tr-search">
+          <input type="search" id="trQuery" placeholder="Search what was said…" autocomplete="off">
+          <select id="trScope"><option value="day">This day</option><option value="all">All days</option></select>
+          <label class="check" style="margin:0;white-space:nowrap" title="Scroll the transcript with playback"><input type="checkbox" id="trFollow" checked> Follow</label>
+        </div>
+        <div class="chips kw" id="trKeywords"></div>
+        <div class="tracklist transcript" id="trList"></div>
+      </div>
     </section>
   </div>
 </main>

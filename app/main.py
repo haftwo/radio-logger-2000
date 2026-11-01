@@ -16,7 +16,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from urllib.parse import urlencode, urlparse
 
-from . import audio, auth, db, metadata, sso
+from . import audio, auth, db, metadata, sso, transcribe
 from .recorder import check_writable, manager
 
 logging.basicConfig(level=os.environ.get("RL_LOG_LEVEL", "INFO"),
@@ -32,6 +32,7 @@ async def lifespan(_app):
     db.init()
     auth.ensure_admin()
     sso.seed_from_env()
+    transcribe.init_db()
     os.makedirs(LOGO_DIR, exist_ok=True)
     await manager.start()
     yield
@@ -168,6 +169,7 @@ def stream_out(s: dict) -> dict:
     return {
         "id": s["id"], "name": s["name"], "slug": s["slug"], "enabled": bool(s["enabled"]),
         "is_music": bool(s["is_music"]), "meta_source": s["meta_source"],
+        "transcribe": bool(s.get("transcribe", 1)),
         "logo": f"/logos/{s['logo_file']}" if s["logo_file"] else None,
         "status": manager.status(s["id"])["state"] if s["enabled"] else "disabled",
         "station": {"name": s.get("icy_name"), "genre": s.get("icy_genre"),
@@ -300,6 +302,7 @@ class StreamIn(BaseModel):
     enabled: bool = True
     is_music: bool = False
     meta_source: str = Field(default="icy", pattern="^(icy|shazam|none)$")
+    transcribe: bool = True
 
 
 class UserIn(BaseModel):
@@ -347,10 +350,10 @@ async def create_stream(body: StreamIn, user=Depends(auth.require_admin)):
     if not body.name.strip():  # no name given: ask the stream, else use the host name
         info = await metadata.probe_station(body.url.strip())
         body.name = (info.get("name") or urlparse(body.url).hostname or "Stream")[:80]
-    sid = db.ex("INSERT INTO streams(name, slug, url, enabled, is_music, meta_source, created_at) "
-                "VALUES (?,?,?,?,?,?,?)",
+    sid = db.ex("INSERT INTO streams(name, slug, url, enabled, is_music, meta_source, transcribe, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
                 (body.name.strip(), db.slugify(body.name), body.url.strip(), int(body.enabled),
-                 int(body.is_music), body.meta_source, int(time.time())))
+                 int(body.is_music), body.meta_source, int(body.transcribe), int(time.time())))
     await manager.restart_stream(sid)
     return {"id": sid}
 
@@ -360,9 +363,9 @@ async def update_stream(stream_id: int, body: StreamIn, user=Depends(auth.requir
     old = get_stream_or_404(stream_id)
     if not body.name.strip():
         body.name = old["name"]
-    db.ex("UPDATE streams SET name=?, url=?, enabled=?, is_music=?, meta_source=? WHERE id=?",
+    db.ex("UPDATE streams SET name=?, url=?, enabled=?, is_music=?, meta_source=?, transcribe=? WHERE id=?",
           (body.name.strip(), body.url.strip(), int(body.enabled), int(body.is_music),
-           body.meta_source, stream_id))
+           body.meta_source, int(body.transcribe), stream_id))
     await manager.restart_stream(stream_id)
     return {"ok": True}
 
@@ -595,4 +598,105 @@ async def edit_track(track_id: int, body: TrackIn, user=Depends(auth.require_use
 @app.delete("/api/tracks/{track_id}")
 def delete_track(track_id: int, user=Depends(auth.require_user)):
     db.ex("DELETE FROM tracks WHERE id=?", (track_id,))
+    return {"ok": True}
+
+
+# ---- transcripts (talk stations) ---------------------------------------------------
+
+def day_bounds(date: str) -> tuple[float, float]:
+    try:
+        day = audio.parse_date(date)
+    except ValueError:
+        raise HTTPException(400, "date must be YYYY-MM-DD")
+    return (dt.datetime.combine(day, dt.time()).timestamp(),
+            dt.datetime.combine(day + dt.timedelta(days=1), dt.time()).timestamp())
+
+
+@app.get("/api/streams/{stream_id}/transcript")
+def get_transcript(stream_id: int, date: str, user=Depends(auth.require_user)):
+    s = get_stream_or_404(stream_id)
+    start, end = day_bounds(date)
+    segs = transcribe.day_segments(stream_id, start, end)
+    c = transcribe.cfg()
+    watch = [w.strip() for w in c["whisper_keywords"].split(",") if w.strip()]
+    return {
+        "enabled": transcribe.enabled() and bool(s.get("transcribe", 1)),
+        "segments": segs,
+        "keywords": transcribe.keywords(segs, watch, exclude=[s["name"], s.get("icy_name") or ""]),
+        "watch": watch,
+        "status": transcribe.day_status(stream_id, start, end),
+        "queue": transcribe.STATE["queue"],
+        "busy": transcribe.STATE["busy"],
+    }
+
+
+@app.get("/api/streams/{stream_id}/transcript/search")
+def search_transcript(stream_id: int, q: str, date: str = "", user=Depends(auth.require_user)):
+    get_stream_or_404(stream_id)
+    start = end = None
+    if date:
+        start, end = day_bounds(date)
+    hits = transcribe.search(stream_id, q, start, end)
+    for h in hits:
+        h["date"] = dt.datetime.fromtimestamp(h["ts"]).date().isoformat()
+    return {"q": q, "results": hits}
+
+
+class WhisperIn(BaseModel):
+    whisper_enabled: bool = False
+    whisper_api: str = Field(default="openai", pattern="^(openai|asr|wyoming)$")
+    whisper_url: str = Field(default="", max_length=300)
+    whisper_model: str = Field(default="", max_length=200)
+    whisper_language: str = Field(default="en", max_length=10)
+    whisper_api_key: str | None = Field(default=None, max_length=300)
+    whisper_backfill_hours: int = Field(default=24, ge=1, le=24 * 60)
+    whisper_keywords: str = Field(default="", max_length=2000)
+    whisper_timeout: int = Field(default=900, ge=30, le=7200)
+
+
+def _whisper_payload(body: WhisperIn) -> dict:
+    data = body.model_dump()
+    data["whisper_enabled"] = "1" if data["whisper_enabled"] else "0"
+    key = data.pop("whisper_api_key")
+    data["whisper_api_key"] = key.strip() if key else transcribe.cfg()["whisper_api_key"]
+    return {k: str(v).strip() for k, v in data.items()}
+
+
+@app.get("/api/admin/transcription")
+def get_whisper(user=Depends(auth.require_admin)):
+    c = transcribe.cfg()
+    key = c.pop("whisper_api_key")
+    st = dict(transcribe.STATE)
+    counts = {r["status"]: r["n"] for r in db.q("SELECT status, COUNT(*) n FROM transcript_chunks GROUP BY status")}
+    talk = [x["name"] for x in db.streams() if not x["is_music"] and x.get("transcribe", 1)]
+    return {**c, "whisper_enabled": c["whisper_enabled"] == "1", "key_set": bool(key),
+            "state": st, "counts": counts, "talk_streams": talk,
+            "segments": db.q1("SELECT COUNT(*) n FROM segments")["n"]}
+
+
+@app.put("/api/admin/transcription")
+def put_whisper(body: WhisperIn, user=Depends(auth.require_admin)):
+    data = _whisper_payload(body)
+    if data["whisper_enabled"] == "1" and not data["whisper_url"]:
+        raise HTTPException(400, "Enter the Whisper server address first")
+    for k, v in data.items():
+        db.set_setting(k, v)
+    return {"ok": True}
+
+
+@app.post("/api/admin/transcription/test")
+async def test_whisper(body: WhisperIn, user=Depends(auth.require_admin)):
+    data = _whisper_payload(body)
+    if not data["whisper_url"]:
+        raise HTTPException(400, "Enter the Whisper server address first")
+    try:
+        return await transcribe.test_connection(data)
+    except Exception as e:
+        raise HTTPException(400, f"Couldn't transcribe with that server: {type(e).__name__}: {e}")
+
+
+@app.post("/api/admin/transcription/retry")
+def retry_whisper(user=Depends(auth.require_admin)):
+    db.ex("DELETE FROM transcript_chunks WHERE status='error'")
+    transcribe.STATE["last_error"] = ""
     return {"ok": True}

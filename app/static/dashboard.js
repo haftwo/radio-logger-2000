@@ -94,6 +94,8 @@
     setStatusPill(s.status);
     $('np').classList.toggle('show', s.is_music);
     $('tracksPanel').hidden = !s.is_music;
+    $('transcriptPanel').hidden = s.is_music;
+    S.tr = null; S.hits = []; $('trQuery').value = '';
     await loadDay(S.date);
   }
 
@@ -122,6 +124,7 @@
     if (!keepPlayback && S.mode === 'replay') stopPlayback();
     renderTimeline();
     renderTracks();
+    if (!S.stream.is_music) loadTranscript(keepPlayback);
     const hrs = S.day.chunks.reduce((a, c) => a + chunkLen(c), 0) / 3600;
     $('dayInfo').textContent = S.day.chunks.length
       ? `${S.day.chunks.length} chunks · ${hrs.toFixed(1)} h recorded${S.day.tracks.length ? ` · ${S.day.tracks.length} tracks` : ''}`
@@ -152,7 +155,7 @@
 
   function renderTimeline() {
     const tl = $('timeline'), d = S.day;
-    tl.querySelectorAll('.chunk,.tick,.trk,.song').forEach((e) => e.remove());
+    tl.querySelectorAll('.chunk,.tick,.trk,.song,.hit').forEach((e) => e.remove());
     const v = tlView(), vEnd = v.start + v.span;
     const pct = (ts) => ((ts - v.start) / v.span) * 100;
     const frag = document.createDocumentFragment();
@@ -188,6 +191,11 @@
       frag.appendChild(e);
     });
     tl.appendChild(frag);
+    (S.hits || []).forEach((h) => {
+      if (h.ts < v.start || h.ts > vEnd) return;
+      const e = document.createElement('div'); e.className = 'hit'; e.style.left = pct(h.ts) + '%';
+      tl.appendChild(e);
+    });
     tl.classList.toggle('zoomed', v.span < v.full);
     $('tlZoomLvl').textContent = v.span >= v.full ? '24 h' : fmtSpan(v.span);
   }
@@ -453,6 +461,7 @@
     else if (S.mode === 'live') $('clockSub').textContent = 'live · ' + (audio.paused ? 'buffering' : 'on air');
     $('playIcon').innerHTML = audio.paused ? '<path d="M8 5v14l11-7z"/>' : '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>';
     if (S.stream && S.stream.is_music) updateNowPlaying(ts);
+    else if (S.tr) updateTranscriptCursor(ts);
   }
 
   function updateNowPlaying(ts) {
@@ -580,6 +589,120 @@
   ['zoomIn', 'zoomOut', 'zoomFit'].forEach((id) => $(id).addEventListener('pointerdown', (e) => e.stopPropagation()));
   const setWaveCursor = () => ww.classList.toggle('zoomed', S.zoom > 1);
   setInterval(setWaveCursor, 300);
+
+  // ---------- transcript (talk stations) ----------
+  const fmtDay = (iso) => new Date(iso + 'T12:00:00Z').toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+  const reEsc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  async function loadTranscript(keep) {
+    const date = S.date, sid = S.stream.id;
+    let tr;
+    try { tr = await api(`/api/streams/${sid}/transcript?date=${date}`); } catch (e) { return; }
+    if (date !== S.date || sid !== S.stream.id) return;
+    const prevCount = S.tr ? S.tr.segments.length : -1;
+    S.tr = tr;
+    renderKeywords();
+    const st = tr.status || {}, done = (st.done || 0) + (st.empty || 0);
+    $('trStatus').textContent = !tr.enabled ? 'Transcription is off. An admin can set it up under Admin → Transcription'
+      : `${tr.segments.length} lines · ${done} chunk(s) transcribed${st.error ? ` · ${st.error} failed` : ''}${tr.queue ? ` · ${tr.queue} waiting` : ''}`;
+    if ($('trQuery').value.trim()) return runSearch();              // keep showing search results
+    if (keep && prevCount === tr.segments.length) return;          // nothing new: don't disturb scrolling
+    renderSegments(tr.segments, false);
+  }
+
+  function markupRegex(extra) {
+    // in the text: watch-list words, names/places, and search hits (topic words stay as chips only)
+    const kw = S.tr ? [...S.tr.keywords.watch.map((k) => [k.term, 'watch']),
+      ...S.tr.keywords.auto.filter((k) => k.kind === 'name').map((k) => [k.term, 'name'])] : [];
+    const all = [...(extra || []).map((t) => [t, 'hit']), ...kw].filter(([t]) => t && t.length > 1);
+    if (!all.length) return null;
+    const kinds = {}; all.forEach(([t, k]) => { if (!kinds[t.toLowerCase()]) kinds[t.toLowerCase()] = k; });
+    const re = new RegExp('\\b(' + Object.keys(kinds).sort((a, b) => b.length - a.length).map(reEsc).join('|') + ')\\b', 'gi');
+    return { re, kinds };
+  }
+  function highlight(text, mk) {
+    const t = esc(text);
+    if (!mk) return t;
+    return t.replace(mk.re, (m) => `<mark class="k-${mk.kinds[m.toLowerCase()] || 'topic'}">${m}</mark>`);
+  }
+
+  function renderSegments(segs, isSearch, terms) {
+    const list = $('trList');
+    if (!segs.length) {
+      list.innerHTML = `<div class="empty">${isSearch ? 'No matches.' : S.tr && S.tr.enabled
+        ? 'No transcript for this day yet. New audio is transcribed a few minutes after it is recorded.'
+        : 'Transcription is off. An admin can turn it on under Admin → Transcription.'}</div>`;
+      return;
+    }
+    const mk = markupRegex(terms);
+    let html = '', prevEnd = null;
+    for (const g of segs) {
+      if (!isSearch && prevEnd !== null && g.ts - prevEnd > 300) html += `<div class="tr-gap">· · · ${Math.round((g.ts - prevEnd) / 60)} min · · ·</div>`;
+      prevEnd = g.end_ts;
+      html += `<div class="seg" data-ts="${g.ts}" data-end="${g.end_ts}" data-date="${g.date || ''}">
+        <div class="tm">${isSearch && g.date && g.date !== S.date ? `<span class="dt">${fmtDay(g.date)}</span>` : ''}${fmtTime(g.ts)}</div>
+        <div class="tx">${highlight(g.text, mk)}</div></div>`;
+    }
+    list.innerHTML = html;
+    S.trRows = isSearch ? null : [...list.querySelectorAll('.seg')];
+    S.trCur = null;
+  }
+
+  function renderKeywords() {
+    const k = S.tr.keywords, chips = [...k.watch, ...k.auto];
+    $('trKeywords').innerHTML = chips.map((c) => `<span class="chip ${c.kind}" data-term="${esc(c.term)}" title="${c.kind === 'watch' ? 'Watch-list word' : c.kind === 'name' ? 'Name or place' : 'Topic'}: search for it">${esc(c.term)}<span class="n">${c.count}</span></span>`).join('');
+  }
+  $('trKeywords').addEventListener('click', (e) => {
+    const c = e.target.closest('[data-term]'); if (!c) return;
+    $('trQuery').value = c.dataset.term; $('trScope').value = 'day'; runSearch();
+  });
+
+  $('trList').addEventListener('click', async (e) => {
+    const row = e.target.closest('.seg'); if (!row) return;
+    const ts = Number(row.dataset.ts), date = row.dataset.date;
+    if (date && date !== S.date) { await loadDay(date); }
+    playAt(ts);                                     // moves the timeline and waveform there
+    S.follow = true; S.tlFollow = true;
+    const v = tlView(); if (ts < v.start || ts > v.start + v.span) { S.tlStart = ts - v.span / 2; renderTimeline(); }
+  });
+
+  let searchTimer = null;
+  $('trQuery').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(runSearch, 300); });
+  $('trScope').addEventListener('change', runSearch);
+  async function runSearch() {
+    const q = $('trQuery').value.trim();
+    if (!q) { S.hits = []; renderTimeline(); if (S.tr) renderSegments(S.tr.segments, false); return; }
+    const scope = $('trScope').value;
+    const r = await api(`/api/streams/${S.stream.id}/transcript/search?q=${encodeURIComponent(q)}${scope === 'day' ? '&date=' + S.date : ''}`).catch(() => null);
+    if (!r || r.q !== q && $('trQuery').value.trim() !== q) return;
+    const results = r.results.slice().sort((a, b) => a.ts - b.ts);
+    S.hits = results.filter((h) => h.date === S.date);
+    renderTimeline();
+    const terms = (q.match(/"[^"]+"|\S+/g) || []).map((t) => t.replace(/"/g, ''));
+    renderSegments(scope === 'all' ? results.reverse() : results, true, terms);
+    $('trStatus').textContent = `${results.length} match${results.length === 1 ? '' : 'es'}${scope === 'all' ? ' across all days' : ' on this day'}`;
+  }
+
+  function updateTranscriptCursor(ts) {
+    if (!S.trRows || !ts) return;
+    // binary search for the segment containing ts
+    let lo = 0, hi = S.trRows.length - 1, idx = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1, r = S.trRows[mid], st = Number(r.dataset.ts);
+      if (st <= ts) { idx = mid; lo = mid + 1; } else hi = mid - 1;
+    }
+    const row = idx >= 0 && ts <= Number(S.trRows[idx].dataset.end) + 2 ? S.trRows[idx] : null;
+    if (row === S.trCur) return;
+    if (S.trCur) S.trCur.classList.remove('current');
+    S.trCur = row;
+    if (row) {
+      row.classList.add('current');
+      if ($('trFollow').checked && !audio.paused) {
+        const list = $('trList');
+        list.scrollTop = row.offsetTop - list.clientHeight / 3;
+      }
+    }
+  }
 
   // ---------- song tags ----------
   let editingTrack = null;

@@ -5,7 +5,7 @@ import os
 import time
 from collections import deque
 
-from . import audio, db, metadata
+from . import audio, db, metadata, transcribe
 
 log = logging.getLogger("radiologger.recorder")
 
@@ -98,6 +98,7 @@ class Manager:
         for s in db.streams(enabled_only=True):
             self._spawn(s)
         self.housekeeping = asyncio.create_task(self._housekeeping())
+        self.transcriber = asyncio.create_task(transcribe.worker())
 
     def _spawn(self, s: dict) -> None:
         w = StreamWorker(s)
@@ -123,6 +124,8 @@ class Manager:
     async def stop(self) -> None:
         if self.housekeeping:
             self.housekeeping.cancel()
+        if getattr(self, "transcriber", None):
+            self.transcriber.cancel()
         for w in self.workers.values():
             await w.stop()
 

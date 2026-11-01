@@ -83,6 +83,8 @@ def init() -> None:
         for col in ("icy_name", "icy_genre", "icy_description", "icy_url"):
             if col not in cols:
                 c.execute(f"ALTER TABLE streams ADD COLUMN {col} TEXT")
+        if "transcribe" not in cols:
+            c.execute("ALTER TABLE streams ADD COLUMN transcribe INTEGER NOT NULL DEFAULT 1")
         for k, v in DEFAULT_SETTINGS.items():
             c.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (k, v))
         c.commit()

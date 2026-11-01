@@ -235,3 +235,27 @@ dialog input[type=time] { width: auto; }
 .callout ol { margin: 6px 0 0; padding-left: 18px; }
 .radio-row { display: flex; flex-direction: column; gap: 6px; }
 .badge-sso { font-size: 11px; padding: 2px 8px; border-radius: 99px; background: #00a4ef22; color: #8fd6ff; border: 1px solid #00a4ef55; }
+
+/* transcript */
+.tr-search { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+.tr-search input[type=search] { flex: 1; background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; }
+.tr-search select { width: auto; }
+.chips.kw { margin: 0 0 12px; }
+.chips.kw .chip { cursor: pointer; }
+.chips.kw .chip:hover { filter: brightness(1.3); }
+.chip.name { background: #ffb54722; color: #ffd69a; border-color: #ffb54755; }
+.chip.watch { background: #ff4d5e26; color: #ffb3bb; border-color: #ff4d5e66; }
+.chip .n { opacity: .6; margin-left: 4px; font-family: var(--mono); }
+.transcript { position: relative; max-height: 520px; font-size: 14px; line-height: 1.55; }
+.seg { display: grid; grid-template-columns: 70px 1fr; gap: 12px; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
+.seg:hover { background: var(--panel-2); }
+.seg.current { background: #2ec4b61f; box-shadow: inset 2px 0 0 var(--accent); }
+.seg .tm { font-family: var(--mono); color: var(--muted); font-size: 12px; padding-top: 2px; }
+.seg .dt { display: block; font-size: 10px; opacity: .7; }
+.seg mark { background: none; color: inherit; border-bottom: 2px solid; padding: 0 1px; }
+.seg mark.k-name { border-color: #ffb547; }
+.seg mark.k-topic { border-color: #2ec4b6; }
+.seg mark.k-watch { background: #ff4d5e33; border-color: #ff4d5e; border-radius: 3px; }
+.seg mark.k-hit { background: #ffe06655; color: #fff; border-color: #ffe066; border-radius: 3px; }
+.tr-gap { text-align: center; color: var(--muted); font-size: 11px; padding: 6px; letter-spacing: .08em; }
+.timeline .hit { position: absolute; top: 12px; bottom: 16px; width: 2px; background: #ffe066; box-shadow: 0 0 4px #ffe066; pointer-events: none; }

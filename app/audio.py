@@ -175,6 +175,11 @@ def apply_retention() -> int:
             except (OSError, ValueError):
                 pass
     db.ex("DELETE FROM tracks WHERE ts < ?", (cutoff,))
+    try:
+        from . import transcribe
+        transcribe.purge_before(cutoff)
+    except Exception:
+        pass
     return removed
 
 
