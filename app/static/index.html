@@ -22,7 +22,7 @@
   <div id="noStreams" class="panel empty" hidden>No streams yet. <span id="noStreamsAdmin" hidden>Add one in <a href="/admin">Admin</a>.</span></div>
 
   <div class="grid" id="main" hidden>
-    <aside>
+    <aside id="leftCol">
       <div class="panel station-card">
         <div class="logo" id="stLogo"></div>
         <h3 id="stName"></h3>
@@ -68,7 +68,6 @@
         </div>
         <div class="timeline" id="timeline"><div class="head" id="tlHead"></div><div class="hover" id="tlHover"><span></span></div></div>
 
-        <div class="wave-row">
         <div class="wave-wrap" id="waveWrap">
           <canvas id="wave"></canvas>
           <div class="label" id="waveLabel"></div>
@@ -80,10 +79,6 @@
           </div>
           <div class="hint wavehelp" id="waveHelp" hidden>Scroll or +/− to zoom · drag to pan · click to seek</div>
           <div class="loading" id="waveMsg">Pick a time on the timeline above, or press Listen live.</div>
-        </div>
-          <div class="vu" title="Audio level (dBFS): bars show loudness, lines show peaks, red light = clipping">
-            <canvas id="vu"></canvas>
-          </div>
         </div>
 
         <div class="transport">
@@ -119,6 +114,13 @@
         <div class="tracklist transcript" id="trList"></div>
       </div>
     </section>
+    <aside class="meters">
+      <div class="panel vu-panel" id="vuPanel">
+        <h2>Levels</h2>
+        <div class="vu" title="Audio level (dBFS): bars show loudness, lines show peaks, red light = clipping"><canvas id="vu"></canvas></div>
+        <div class="vu-read mono"><span id="vuL">L —</span><span id="vuR">R —</span></div>
+      </div>
+    </aside>
   </div>
 </main>
 <dialog id="trackDlg">

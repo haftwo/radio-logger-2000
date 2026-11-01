@@ -353,6 +353,23 @@
     requestAnimationFrame(frame);
   }
 
+  // match the Levels panel height to the left column so their tops and bottoms line up
+  (function syncMeterHeight() {
+    const left = $('leftCol'), panel = $('vuPanel');
+    if (!left || !panel || !window.ResizeObserver) return;
+    const home = panel.parentElement;
+    const place = () => {
+      const narrow = window.innerWidth <= 1100;
+      // on narrow screens the meter tucks under the left column instead of taking a column
+      if (narrow && panel.parentElement !== left) left.appendChild(panel);
+      if (!narrow && panel.parentElement !== home) home.appendChild(panel);
+      panel.style.height = narrow ? '' : left.getBoundingClientRect().height + 'px';
+    };
+    new ResizeObserver(place).observe(left);
+    window.addEventListener('resize', place);
+    place();
+  })();
+
   // ---------- level meter (dBFS, RMS bars with VU-style ballistics + peak hold) ----------
   const VU = { min: -48, max: 3, rms: [-120, -120], peak: [-120, -120], hold: [-120, -120], holdAt: [0, 0], clipAt: 0, last: 0,
     buf: new Float32Array(2048) };
@@ -383,7 +400,7 @@
       if (ch[i][2] >= 0.999) VU.clipAt = now;
     }
     g.clearRect(0, 0, w, h);
-    const top = 16, bot = h - 8, span = bot - top;
+    const top = 18, bot = h - 10, span = bot - top;
     const y = (db) => top + span * (1 - (Math.max(VU.min, Math.min(VU.max, db)) - VU.min) / (VU.max - VU.min));
     // scale
     g.font = '9px ui-monospace, monospace'; g.textAlign = 'right'; g.textBaseline = 'middle';
@@ -410,9 +427,12 @@
     g.fillText('L', xs[0] + bw / 2, 8); g.fillText('R', xs[1] + bw / 2, 8);
     const clip = now - VU.clipAt < 1500;
     g.fillStyle = clip ? '#ff4d5e' : '#2a1820'; g.beginPath(); g.arc(12, 8, 4, 0, Math.PI * 2); g.fill();
-    $('vu').parentElement.title = active
-      ? `L ${VU.rms[0].toFixed(1)} dB RMS / ${VU.hold[0].toFixed(1)} peak · R ${VU.rms[1].toFixed(1)} dB RMS / ${VU.hold[1].toFixed(1)} peak${clip ? ' · CLIPPING' : ''}`
-      : 'Audio level (dBFS): bars show loudness, lines show peaks, red light = clipping';
+    if (now - (VU.readAt || 0) > 200) {   // numeric readout, throttled
+      VU.readAt = now;
+      const f = (v) => (v <= -100 ? '—' : v.toFixed(1));
+      $('vuL').textContent = `L ${active ? f(VU.rms[0]) : '—'}`;
+      $('vuR').textContent = `R ${active ? f(VU.rms[1]) : '—'}`;
+    }
   }
 
   function sizeCanvas(cv) {

@@ -260,8 +260,18 @@ dialog input[type=time] { width: auto; }
 .tr-gap { text-align: center; color: var(--muted); font-size: 11px; padding: 6px; letter-spacing: .08em; }
 .timeline .hit { position: absolute; top: 12px; bottom: 16px; width: 2px; background: #ffe066; box-shadow: 0 0 4px #ffe066; pointer-events: none; }
 
-/* level meter */
-.wave-row { display: grid; grid-template-columns: 1fr 76px; gap: 10px; margin-top: 16px; }
-.wave-row .wave-wrap { margin-top: 0; }
-.vu { background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; height: 170px; }
+/* level meter panel (right column, same height as the station + now playing column) */
+.wrap { max-width: 1480px; }
+.grid { grid-template-columns: 300px minmax(0, 1fr) 132px; align-items: start; }
+.meters { align-self: start; }
+.vu-panel { display: flex; flex-direction: column; padding: 14px 12px; min-height: 300px; }
+.vu-panel h2 { text-align: center; margin-bottom: 10px; }
+.vu { flex: 1; min-height: 200px; background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
 .vu canvas { width: 100%; height: 100%; display: block; }
+.vu-read { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin-top: 8px; padding: 0 2px; }
+@media (max-width: 1100px) {
+  .grid { grid-template-columns: 260px minmax(0, 1fr); }
+  .meters:empty { display: none; }
+  #leftCol .vu-panel { margin-top: 18px; height: 260px !important; min-height: 0; }
+}
+@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
