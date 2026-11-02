@@ -50,8 +50,8 @@
     switch (s.health) {
       case 'healthy': return 'Audio flowing';
       case 'quiet': return `Quiet for ${dur(s.quiet_for)} · outage after ${dur(status.threshold)}`;
-      case 'silent': return `Silent for ${dur(since)}`;
-      case 'down': return `No audio for ${dur(since)}`;
+      case 'silent': return `Silent ${dur(since)}`;
+      case 'down': return `No audio ${dur(since)}`;
       case 'starting': return 'Connecting to the stream…';
       default: return 'Not being recorded';
     }
@@ -65,22 +65,28 @@
       + ` · Email alarms <b>${status.alarms ? 'on' : 'off'}</b>`;
     document.title = (bad ? `(${bad}) ` : '') + 'Outages · Radio Logger - 2000';
     $('health').innerHTML = list.map((s) => {
+      const off = s.health === 'silent' || s.health === 'down';
       const last = s.last_outage;
-      const lastTxt = !last ? 'No outages recorded'
-        : last.end_ts ? `Last outage ${dur(now() - last.end_ts)} ago · lasted ${dur(last.end_ts - last.start_ts)}`
-        : 'Outage in progress';
-      return `<div class="hcard ${s.health}" data-id="${s.id}" title="${esc(s.last_error || '')}">
+      // the detail lives in the tooltip; the tile shows only what you need at a glance
+      const tip = [
+        `${s.name}: ${LABEL[s.health] || s.health}, ${stateLine(s)}`,
+        `Availability: 24h ${pct(s.availability.day)} · 7d ${pct(s.availability.week)}`,
+        `${s.outages_24h} outage${s.outages_24h === 1 ? '' : 's'} in the last 24h`,
+        !last ? 'No outages recorded' : last.end_ts
+          ? `Last outage ${dur(now() - last.end_ts)} ago, lasted ${dur(last.end_ts - last.start_ts)}` : 'Outage in progress',
+        s.last_error ? `Recorder: ${s.last_error}` : '',
+      ].filter(Boolean).join('\n');
+      const sub = off ? `<span class="htimer">${esc(stateLine(s))}</span>`
+        : s.health === 'quiet' ? `Quiet ${dur(s.quiet_for)}`
+        : s.health === 'healthy' || s.availability.day != null
+          ? `${pct(s.availability.day)} · ${s.outages_24h ? `${s.outages_24h} today` : 'no outages'}` : esc(stateLine(s));
+      return `<div class="hcard ${s.health}" data-id="${s.id}" title="${esc(tip)}">
         <div class="hlogo">${s.logo ? `<img src="${esc(s.logo)}" alt="">` : `<span class="ph">${esc(initials(s.name))}</span>`}</div>
         <div class="hbody">
           <div class="hname">${esc(s.name)}</div>
-          <div class="hstate"><span class="hdot"></span><b>${LABEL[s.health] || s.health}</b><span class="muted">${esc(stateLine(s))}</span></div>
-          <div class="hmeta">
-            <span title="Availability, last 24 hours">24h <b>${pct(s.availability.day)}</b></span>
-            <span title="Availability, last 7 days">7d <b>${pct(s.availability.week)}</b></span>
-            <span title="Outages in the last 24 hours">${s.outages_24h} outage${s.outages_24h === 1 ? '' : 's'} today</span>
-          </div>
-          <div class="hint">${esc(lastTxt)}</div>
+          <div class="hsub">${sub}</div>
         </div>
+        <div class="hstate"><span class="hdot"></span>${LABEL[s.health] || s.health}</div>
       </div>`;
     }).join('');
   }
@@ -138,7 +144,7 @@
     });
     if (status) document.querySelectorAll('.hcard').forEach((el) => {
       const s = status.streams.find((x) => x.id === Number(el.dataset.id));
-      if (s && (s.health === 'silent' || s.health === 'down')) el.querySelector('.hstate .muted').textContent = stateLine(s);
+      if (s && (s.health === 'silent' || s.health === 'down')) { const t = el.querySelector('.htimer'); if (t) t.textContent = stateLine(s); }
     });
   }
 
