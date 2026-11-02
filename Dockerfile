@@ -10,6 +10,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 
+ARG RL_VERSION=dev
+ARG RL_BUILD_SHA=
+ARG RL_BUILD_DATE=
+ENV RL_VERSION=$RL_VERSION RL_BUILD_SHA=$RL_BUILD_SHA RL_BUILD_DATE=$RL_BUILD_DATE
+
 ENV TZ=Australia/Melbourne \
     RL_CONFIG_DIR=/config \
     RL_RECORDINGS_DIR=/recordings \

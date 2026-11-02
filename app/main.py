@@ -27,6 +27,36 @@ STATIC = os.path.join(HERE, "static")
 LOGO_DIR = os.path.join(db.CONFIG_DIR, "logos")
 APP_NAME = "Radio Logger - 2000"
 
+# Stamped into the image by the GitHub Actions build (see Dockerfile). "dev" when run from source.
+VERSION = os.environ.get("RL_VERSION", "dev")
+BUILD_SHA = os.environ.get("RL_BUILD_SHA", "")
+BUILD_DATE = os.environ.get("RL_BUILD_DATE", "")
+
+
+def _built_at() -> dt.datetime | None:
+    try:
+        return dt.datetime.fromisoformat(BUILD_DATE.replace("Z", "+00:00")).astimezone()
+    except ValueError:
+        return None
+
+
+def version_info() -> dict:
+    built = _built_at()
+    return {"version": VERSION, "sha": BUILD_SHA[:7], "built": built.isoformat() if built else None}
+
+
+def _version_badge() -> tuple[str, str]:
+    built = _built_at()
+    label = f"v{VERSION}" if VERSION != "dev" else "dev build"
+    if built:
+        label += f" · {built.day} {built:%b}"
+    title = " · ".join(filter(None, [
+        f"Version {VERSION}",
+        f"commit {BUILD_SHA[:7]}" if BUILD_SHA else "",
+        f"built {built.day} {built:%b %Y, %H:%M}" if built else "",
+    ]))
+    return label, title
+
 
 @asynccontextmanager
 async def lifespan(_app):
@@ -50,7 +80,8 @@ app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 # Cache-busting: stamp script/style URLs with a version that changes whenever the static files do,
 # so browsers never mix a new page with an old cached dashboard.js after an update.
-ASSET_VERSION = str(int(max(os.path.getmtime(os.path.join(STATIC, f)) for f in os.listdir(STATIC))))
+ASSET_VERSION = (os.environ.get("RL_BUILD_SHA", "")[:7]
+                 or str(int(max(os.path.getmtime(os.path.join(STATIC, f)) for f in os.listdir(STATIC)))))
 
 
 def page(name: str) -> HTMLResponse:
@@ -58,6 +89,8 @@ def page(name: str) -> HTMLResponse:
         html = f.read()
     for asset in ("app.css", "dashboard.js", "admin.js", "outages.js"):
         html = html.replace(f"/static/{asset}\"", f"/static/{asset}?v={ASSET_VERSION}\"")
+    label, title = _version_badge()
+    html = html.replace("{{VERSION_TITLE}}", title).replace("{{VERSION}}", label)
     return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
 
 
@@ -169,7 +202,7 @@ def logout(request: Request):
 
 @app.get("/healthz")
 def healthz():
-    return {"ok": True}
+    return {"ok": True, **version_info()}
 
 
 # ---- viewer API ---------------------------------------------------------------
@@ -195,7 +228,7 @@ def get_stream_or_404(stream_id: int) -> dict:
 
 @app.get("/api/me")
 def me(user=Depends(auth.require_user)):
-    return {**user, "app": APP_NAME, "tz": time.tzname[0], "tz_name": os.environ.get("TZ", "UTC")}
+    return {**user, "app": APP_NAME, "tz": time.tzname[0], "tz_name": os.environ.get("TZ", "UTC"), **version_info()}
 
 
 @app.get("/api/streams")

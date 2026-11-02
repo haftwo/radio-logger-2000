@@ -28,6 +28,7 @@ Records internet radio streams to disk in clock-aligned chunks and gives you a w
 | Track detection | **Automatic** (default) reads Icecast/Shoutcast `StreamTitle` and falls back to Shazam when the stream has no titles (HLS, or titles that can't be read). Detection status shows on Admin → Streams. **Shazam** fingerprints the last ~12 s of the current chunk every N seconds (for HLS streams like Double J that have no ICY tags; uses the unofficial `shazamio` library). Artwork comes from Shazam, otherwise the iTunes Search API. |
 | Outage detection | Each recorder runs ffmpeg's `silencedetect` filter and reports encoder progress. Silence below the set level (default −50 dB), or no audio arriving at all, for longer than the threshold opens an outage; it closes once audio has been back for 5 s. Outages survive container restarts. Kept for a year. |
 | Email alarms | Plain SMTP (STARTTLS, SSL or none). Sent once an outage has lasted the alarm delay, and again on recovery. Set the Public URL (Admin → Single sign-on) to get replay links in the emails. |
+| Version | Every build from GitHub Actions is stamped `v1.<build number>` with its commit and build time. It shows next to the logo on every page (hover for detail) and in `/healthz`, so you can tell at a glance whether Unraid has pulled the latest image. Running from source shows "dev build". |
 | Auth | Session cookie, PBKDF2-hashed passwords in SQLite at `/config/radiologger.db`. |
 
 ## Install on Unraid
