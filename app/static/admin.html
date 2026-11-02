@@ -13,7 +13,7 @@
 <header class="topbar">
   <a class="brand" href="/"><img src="/static/logo.png" alt=""><div class="name">Radio Logger <span>- 2000</span></div></a>
   <div class="spacer"></div>
-  <nav><a href="/">Dashboard</a><a href="/admin" class="active">Admin</a><a href="/logout">Sign out</a></nav>
+  <nav><a href="/">Dashboard</a><a href="/outages">Outages</a><a href="/admin" class="active">Admin</a><a href="/logout">Sign out</a></nav>
   <div class="who" id="who"></div>
 </header>
 
@@ -22,6 +22,7 @@
     <button class="active" data-tab="streams">Streams</button>
     <button data-tab="recording">Recording</button>
     <button data-tab="users">Users</button>
+    <button data-tab="alarms">Alarms</button>
     <button data-tab="transcription">Transcription</button>
     <button data-tab="sso">Single sign-on</button>
   </div>
@@ -97,6 +98,80 @@
       <p class="hint">Viewers can replay and listen live. Admins can also manage streams, settings and users. Microsoft accounts are created automatically on first sign-in when single sign-on is on.</p>
     </div>
   </section>
+  <!-- outage detection and email alarms -->
+  <section class="tab" id="tab-alarms">
+    <div class="cols">
+      <form class="panel" id="alarmForm" autocomplete="off">
+        <h2>Outage detection</h2>
+        <div class="cols2" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <label class="field"><span>Outage after (seconds)</span>
+            <input type="number" name="outage_threshold_seconds" min="10" max="3600" required>
+            <div class="hint">Silence or no audio longer than this is logged as an outage.</div></label>
+          <label class="field"><span>Silence level (dB)</span>
+            <input type="number" name="silence_db" min="-90" max="-10" required>
+            <div class="hint">Quieter than this counts as silence. −50 suits most stations. Changing it restarts the recorders.</div></label>
+        </div>
+
+        <h2 style="margin-top:10px">Email alarms</h2>
+        <label class="check"><input type="checkbox" name="alarm_enabled"> <b>Email when a stream goes off air</b></label>
+        <label class="field"><span>Send to</span>
+          <input type="text" name="alarm_recipients" placeholder="you@example.com, oncall@example.com">
+          <div class="hint">Comma separated.</div></label>
+        <div class="cols2" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <label class="field"><span>Email once it has lasted (seconds)</span>
+            <input type="number" name="alarm_delay_seconds" min="10" max="86400" required>
+            <div class="hint">Raise this to skip short blips. Never less than the outage time.</div></label>
+          <label class="check" style="align-self:center"><input type="checkbox" name="alarm_on_recovery"> Also email when it's back</label>
+        </div>
+
+        <h2 style="margin-top:10px">Mail server (SMTP)</h2>
+        <div class="cols2" style="display:grid;grid-template-columns:2fr 1fr;gap:12px">
+          <label class="field"><span>Server</span><input type="text" name="smtp_host" placeholder="smtp.gmail.com"></label>
+          <label class="field"><span>Port</span><input type="number" name="smtp_port" min="1" max="65535"></label>
+        </div>
+        <label class="field"><span>Security</span>
+          <select name="smtp_security">
+            <option value="starttls">STARTTLS (usually port 587)</option>
+            <option value="ssl">SSL/TLS (usually port 465)</option>
+            <option value="none">None (local relay only)</option>
+          </select></label>
+        <div class="cols2" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <label class="field"><span>Username</span><input type="text" name="smtp_username" autocomplete="off" placeholder="Blank if no sign-in"></label>
+          <label class="field"><span>Password <span class="muted" id="smtpPwState"></span></span>
+            <input type="password" name="smtp_password" autocomplete="new-password" placeholder="Leave blank to keep"></label>
+        </div>
+        <label class="field"><span>From</span><input type="text" name="smtp_from" placeholder="Radio Logger &lt;alerts@example.com&gt; (defaults to the username)"></label>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn primary" type="submit">Save alarms</button>
+          <button class="btn" type="button" id="alarmTest">Send test email</button>
+          <button class="btn danger" type="button" id="smtpPwClear" hidden>Forget password</button>
+        </div>
+        <p class="hint" id="alarmTestResult"></p>
+      </form>
+      <div>
+        <div class="panel">
+          <h2>Status</h2>
+          <div class="stat"><span>Alarms</span><span class="mono" id="aState">—</span></div>
+          <div class="stat"><span>Last email sent</span><span class="mono" id="aSent">—</span></div>
+          <p class="hint" id="aErr" style="color:var(--warn)"></p>
+          <p class="hint" id="aLinks"></p>
+          <a class="btn sm" href="/outages">Open the outage log</a>
+        </div>
+        <div class="panel" style="margin-top:18px">
+          <h2>How detection works</h2>
+          <div class="callout">
+            <ol>
+              <li><b>Silence</b>: the recorder listens to every stream as it records. Audio below the silence level for longer than the outage time opens an outage.</li>
+              <li><b>Stream down</b>: no audio arriving at all (the station dropped, stalled or refused the connection) for the same time.</li>
+              <li>An outage closes once audio has been back for 5 seconds. Each one appears on the Outages page with a Replay link.</li>
+              <li><b>Gmail / Microsoft 365</b>: use <span class="mono">smtp.gmail.com</span> or <span class="mono">smtp.office365.com</span>, port 587, STARTTLS, and an <b>app password</b> rather than your normal one.</li>
+            </ol>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- transcription -->
   <section class="tab" id="tab-transcription">
     <div class="cols">

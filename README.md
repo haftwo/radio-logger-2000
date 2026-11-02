@@ -10,10 +10,12 @@ Records internet radio streams to disk in clock-aligned chunks and gives you a w
 - **Music stations** – show the cover art and track for whatever moment you're replaying, plus a "Played on this day" list you can click to jump to a song. Track changes are marked on the timeline and waveform.
   - *Top played* tab: the top 10 songs for the selected day and for the 7 days ending on it, with play counts. Click a song to jump to the last time it played.
   - *Export*: download played songs as CSV (date, time, station, artist, title, album, tags, duration, source) for the day, the 7 days to that day, or everything logged.
+- **Outages** – live health indicator for every stream (Healthy / Quiet / Silent / No signal) with 24-hour and 7-day availability, plus a log of every outage: any silence or loss of audio lasting more than 30 s (configurable). Filter by station and period, download as CSV, and jump straight to the moment it dropped with **Replay**.
 - **Admin** (admin role only)
   - *Streams*: add/edit/delete, enable/disable, restart a recorder, upload a station logo (click the logo), see the recorder log.
   - *Recording*: recordings folder, how long to keep audio, chunk size (1–60 min), MP3 bitrate, Shazam interval, and disk usage.
   - *Users*: add/edit/delete users, reset passwords, Admin vs Viewer roles.
+  - *Alarms*: outage threshold and silence level, and email alarms over SMTP (who to email, how long before alerting, recovery emails, test email).
 
 ## How it works
 
@@ -24,6 +26,8 @@ Records internet radio streams to disk in clock-aligned chunks and gives you a w
 | Retention | Hourly sweep deletes chunks and track history older than the retention setting. |
 | Live | `/api/streams/{id}/live` re-encodes the source to MP3, so HLS/AAC/http streams all play in the browser, including over your https Cloudflare hostname. |
 | Track detection | **Automatic** (default) reads Icecast/Shoutcast `StreamTitle` and falls back to Shazam when the stream has no titles (HLS, or titles that can't be read). Detection status shows on Admin → Streams. **Shazam** fingerprints the last ~12 s of the current chunk every N seconds (for HLS streams like Double J that have no ICY tags; uses the unofficial `shazamio` library). Artwork comes from Shazam, otherwise the iTunes Search API. |
+| Outage detection | Each recorder runs ffmpeg's `silencedetect` filter and reports encoder progress. Silence below the set level (default −50 dB), or no audio arriving at all, for longer than the threshold opens an outage; it closes once audio has been back for 5 s. Outages survive container restarts. Kept for a year. |
+| Email alarms | Plain SMTP (STARTTLS, SSL or none). Sent once an outage has lasted the alarm delay, and again on recovery. Set the Public URL (Admin → Single sign-on) to get replay links in the emails. |
 | Auth | Session cookie, PBKDF2-hashed passwords in SQLite at `/config/radiologger.db`. |
 
 ## Install on Unraid

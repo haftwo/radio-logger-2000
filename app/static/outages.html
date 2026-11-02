@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Outages · Radio Logger - 2000</title>
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" href="/static/favicon-32.png">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/"><img src="/static/logo.png" alt=""><div class="name">Radio Logger <span>- 2000</span></div></a>
+  <div class="spacer"></div>
+  <nav><a href="/">Dashboard</a><a href="/outages" class="active">Outages</a><a href="/admin" id="adminLink" hidden>Admin</a><a href="/logout">Sign out</a></nav>
+  <div class="who" id="who"></div>
+</header>
+
+<main class="wrap">
+  <div class="panel-head">
+    <h2 class="page-h">Stream health</h2>
+    <div class="muted small" id="healthNote"></div>
+  </div>
+  <div class="health-grid" id="health"></div>
+  <div id="noStreams" class="panel empty" hidden>No streams yet.</div>
+
+  <div class="panel" style="margin-top:22px">
+    <div class="panel-head">
+      <h2>Outage log</h2>
+      <div class="head-actions">
+        <select id="fStream" aria-label="Station"><option value="0">All stations</option></select>
+        <select id="fDays" aria-label="Period">
+          <option value="1">Last 24 hours</option>
+          <option value="7" selected>Last 7 days</option>
+          <option value="30">Last 30 days</option>
+          <option value="90">Last 90 days</option>
+          <option value="0">Everything</option>
+        </select>
+        <a class="btn sm" id="csvBtn" href="#" title="Download as CSV">
+          <svg viewBox="0 0 24 24"><path d="M12 3v10.6l3.3-3.3 1.4 1.4L12 16.4l-4.7-4.7 1.4-1.4L11 13.6V3zM5 19h14v2H5z"/></svg>CSV</a>
+      </div>
+    </div>
+    <div class="out-summary" id="summary"></div>
+    <div class="table-scroll">
+      <table class="list outages">
+        <thead><tr><th>Station</th><th>Cause</th><th>Started</th><th>Ended</th><th>Duration</th><th></th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <p class="hint" id="logHint"></p>
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+<script src="/static/outages.js"></script>
+</body>
+</html>

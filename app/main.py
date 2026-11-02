@@ -17,7 +17,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from urllib.parse import urlencode, urlparse
 
-from . import audio, auth, db, metadata, sso, transcribe
+from . import audio, auth, db, metadata, outages, sso, transcribe
 from .recorder import check_writable, manager
 
 logging.basicConfig(level=os.environ.get("RL_LOG_LEVEL", "INFO"),
@@ -34,6 +34,7 @@ async def lifespan(_app):
     auth.ensure_admin()
     sso.seed_from_env()
     transcribe.init_db()
+    outages.init_db()
     os.makedirs(LOGO_DIR, exist_ok=True)
     await manager.start()
     yield
@@ -55,7 +56,7 @@ ASSET_VERSION = str(int(max(os.path.getmtime(os.path.join(STATIC, f)) for f in o
 def page(name: str) -> HTMLResponse:
     with open(os.path.join(STATIC, name), encoding="utf-8") as f:
         html = f.read()
-    for asset in ("app.css", "dashboard.js", "admin.js"):
+    for asset in ("app.css", "dashboard.js", "admin.js", "outages.js"):
         html = html.replace(f"/static/{asset}\"", f"/static/{asset}?v={ASSET_VERSION}\"")
     return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
 
@@ -82,6 +83,13 @@ def admin_page(request: Request):
     if user["role"] != "admin":
         return RedirectResponse("/", 303)
     return page("admin.html")
+
+
+@app.get("/outages")
+def outages_page(request: Request):
+    if not auth.current_user(request):
+        return RedirectResponse("/login", 303)
+    return page("outages.html")
 
 
 @app.get("/login")
@@ -654,6 +662,143 @@ async def edit_track(track_id: int, body: TrackIn, user=Depends(auth.require_use
 def delete_track(track_id: int, user=Depends(auth.require_user)):
     db.ex("DELETE FROM tracks WHERE id=?", (track_id,))
     return {"ok": True}
+
+
+# ---- outages (silence / drop-outs) ----------------------------------------------------
+
+@app.get("/api/outages/status")
+def outage_status(user=Depends(auth.require_user)):
+    """Live health of every stream, plus availability over the last 24 hours and 7 days."""
+    now = time.time()
+    out = []
+    for s in db.streams():
+        st = manager.status(s["id"]) if s["enabled"] else None
+        h = st or {"health": "disabled", "health_since": None, "quiet_for": 0, "last_audio": None}
+        avail = {}
+        for label, secs in (("day", 86400), ("week", 7 * 86400)):
+            start = max(now - secs, s["created_at"])
+            span = now - start
+            avail[label] = round(100 * (1 - outages.downtime(s["id"], start, now) / span), 3) if span > 60 else None
+        last = db.q1("SELECT start_ts, end_ts, cause FROM outages WHERE stream_id=? ORDER BY start_ts DESC LIMIT 1",
+                     (s["id"],))
+        out.append({
+            "id": s["id"], "name": s["name"], "enabled": bool(s["enabled"]),
+            "logo": f"/logos/{s['logo_file']}" if s["logo_file"] else None,
+            "health": h["health"], "since": h["health_since"], "quiet_for": h["quiet_for"],
+            "last_audio": h["last_audio"], "recorder": st["state"] if st else "disabled",
+            "last_error": st["last_error"] if st else "",
+            "availability": avail, "last_outage": last,
+            "outages_24h": db.q1("SELECT COUNT(*) n FROM outages WHERE stream_id=? AND start_ts>=?",
+                                 (s["id"], now - 86400))["n"],
+        })
+    return {"now": now, "threshold": outages.threshold(), "alarms": outages.alarms_on(), "streams": out}
+
+
+def _outage_window(days: int) -> tuple[float | None, float | None]:
+    if days <= 0:
+        return None, None
+    return time.time() - min(days, outages.KEEP_DAYS) * 86400, None
+
+
+@app.get("/api/outages")
+def list_outages(stream_id: int = 0, days: int = 7, user=Depends(auth.require_user)):
+    rows = outages.listing(stream_id or None, *_outage_window(days))
+    return {"outages": rows, "count": len(rows), "downtime": sum(r["duration"] for r in rows)}
+
+
+def csv_cell(v) -> str:
+    """Neutralise spreadsheet formulas (a station name like =HYPERLINK(...) stays plain text)."""
+    v = "" if v is None else str(v)
+    return "'" + v if v[:1] in ("=", "+", "-", "@", "\t", "\r") else v
+
+
+@app.get("/api/outages.csv")
+def export_outages(stream_id: int = 0, days: int = 7, user=Depends(auth.require_user)):
+    rows = outages.listing(stream_id or None, *_outage_window(days), limit=100000)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Station", "Cause", "Started", "Ended", "Duration (s)", "Duration", "Alarm emailed"])
+    fmt = lambda ts: dt.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else "ongoing"
+    for r in reversed(rows):
+        w.writerow([csv_cell(r["stream_name"]), r["cause_label"], fmt(r["start_ts"]), fmt(r["end_ts"]),
+                    round(r["duration"]), outages.fmt_duration(r["duration"]), "yes" if r["alerted"] == 1 else "no"])
+    name = f"outages-{'all' if days <= 0 else f'{days}d'}-{dt.date.today().isoformat()}.csv"
+    return StreamingResponse(iter(["\ufeff" + buf.getvalue()]), media_type="text/csv; charset=utf-8",
+                             headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+class AlarmsIn(BaseModel):
+    outage_threshold_seconds: int = Field(default=30, ge=10, le=3600)
+    silence_db: int = Field(default=-50, ge=-90, le=-10)
+    alarm_enabled: bool = False
+    alarm_recipients: str = Field(default="", max_length=2000)
+    alarm_delay_seconds: int = Field(default=30, ge=10, le=86400)
+    alarm_on_recovery: bool = True
+    smtp_host: str = Field(default="", max_length=200)
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_security: str = Field(default="starttls", pattern="^(starttls|ssl|none)$")
+    smtp_username: str = Field(default="", max_length=200)
+    smtp_password: str | None = Field(default=None, max_length=500)   # None/blank = keep current
+    smtp_from: str = Field(default="", max_length=200)
+
+
+def _alarms_payload(body: AlarmsIn) -> dict:
+    data = body.model_dump()
+    for k in ("alarm_enabled", "alarm_on_recovery"):
+        data[k] = "1" if data[k] else "0"
+    pw = data.pop("smtp_password")
+    data["smtp_password"] = pw if pw else outages.cfg()["smtp_password"]
+    data["alarm_recipients"] = ", ".join(outages.recipients(data["alarm_recipients"]))
+    data["alarm_delay_seconds"] = max(data["alarm_delay_seconds"], data["outage_threshold_seconds"])
+    return {k: str(v).strip() if k != "smtp_password" else str(v) for k, v in data.items()}
+
+
+@app.get("/api/admin/alarms")
+def get_alarms(user=Depends(auth.require_admin)):
+    c = outages.cfg()
+    pw = c.pop("smtp_password")
+    return {**c, "alarm_enabled": c["alarm_enabled"] == "1", "alarm_on_recovery": c["alarm_on_recovery"] == "1",
+            "password_set": bool(pw), "public_url": db.get_settings().get("sso_public_url", ""),
+            "state": outages.STATE}
+
+
+@app.put("/api/admin/alarms")
+async def put_alarms(body: AlarmsIn, user=Depends(auth.require_admin)):
+    data = _alarms_payload(body)
+    if data["alarm_enabled"] == "1":
+        if not data["smtp_host"]:
+            raise HTTPException(400, "Enter an SMTP server before turning email alarms on")
+        if not outages.recipients(data["alarm_recipients"]):
+            raise HTTPException(400, "Add at least one recipient before turning email alarms on")
+    bad = [a for a in outages.recipients(data["alarm_recipients"]) if not outages.EMAIL_RE.match(a)]
+    if bad:
+        raise HTTPException(400, f"Not an email address: {', '.join(bad)}")
+    old_db = outages.cfg()["silence_db"]
+    for k, v in data.items():
+        db.set_setting(k, v)
+    restarted = str(old_db) != data["silence_db"]
+    if restarted:  # the silence level is baked into each recorder's ffmpeg filter
+        await manager.restart_all()
+    return {"ok": True, "restarted": restarted}
+
+
+@app.delete("/api/admin/alarms/password")
+def clear_smtp_password(user=Depends(auth.require_admin)):
+    db.set_setting("smtp_password", "")
+    return {"ok": True}
+
+
+@app.post("/api/admin/alarms/test")
+async def test_alarms(body: AlarmsIn, user=Depends(auth.require_admin)):
+    data = _alarms_payload(body)
+    when = dt.datetime.now().strftime("%a %d %b %Y, %H:%M:%S")
+    try:
+        await asyncio.to_thread(outages.send_email, data, "[Radio Logger] Test alarm",
+                                f"This is a test email from {APP_NAME}, sent by {user['username']} at {when}.\n\n"
+                                "If you can read this, outage alarms will reach you.\n")
+    except Exception as e:
+        raise HTTPException(400, f"Couldn't send: {type(e).__name__}: {e}")
+    return {"ok": True, "to": outages.recipients(data["alarm_recipients"])}
 
 
 # ---- transcripts (talk stations) ---------------------------------------------------
