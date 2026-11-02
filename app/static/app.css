@@ -354,3 +354,9 @@ table.outages tr.ongoing td { background: #ff4d5e14; }
 .cause.no_audio { color: #ffb3bb; border-color: #ff4d5e66; background: #ff4d5e1a; }
 .live-txt { color: var(--live); font-weight: 700; animation: pulse 1.6s infinite; }
 @media (max-width: 700px) { .panel-head .head-actions { flex-wrap: wrap; } }
+
+/* build version badge */
+.ver { font-family: var(--mono); font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 99px;
+  padding: 2px 8px; white-space: nowrap; cursor: default; }
+.login-ver { display: inline-block; margin-top: 14px; }
+@media (max-width: 600px) { .topbar .ver { display: none; } }
