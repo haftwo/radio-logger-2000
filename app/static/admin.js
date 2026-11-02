@@ -30,6 +30,7 @@
     if (b.dataset.tab === 'recording') loadSettings();
     if (b.dataset.tab === 'sso') loadSSO();
     if (b.dataset.tab === 'transcription') loadWhisper();
+    if (b.dataset.tab === 'alarms') loadAlarms();
   }));
 
   // ---------- streams ----------
@@ -264,6 +265,59 @@
   };
   $('whisperRetry').onclick = async () => { await api('/api/admin/transcription/retry', 'POST'); toast('Failed chunks will be retried'); loadWhisper(true); };
   setInterval(() => { if ($('tab-transcription').classList.contains('active')) loadWhisper(true); }, 5000);
+
+  // ---------- outage detection and email alarms ----------
+  const A_KEYS = ['outage_threshold_seconds', 'silence_db', 'alarm_recipients', 'alarm_delay_seconds', 'smtp_host', 'smtp_port', 'smtp_security', 'smtp_username', 'smtp_from'];
+  async function loadAlarms(statusOnly) {
+    const c = await api('/api/admin/alarms'), f = $('alarmForm');
+    if (!statusOnly) {
+      A_KEYS.forEach((k) => (f[k].value = c[k] ?? ''));
+      f.alarm_enabled.checked = c.alarm_enabled; f.alarm_on_recovery.checked = c.alarm_on_recovery;
+      f.smtp_password.value = '';
+      $('smtpPwState').textContent = c.password_set ? '· saved' : '';
+      $('smtpPwClear').hidden = !c.password_set;
+    }
+    const on = c.alarm_enabled && c.smtp_host && c.alarm_recipients;
+    $('aState').textContent = on ? 'On' : c.alarm_enabled ? 'Incomplete settings' : 'Off';
+    $('aState').style.color = on ? 'var(--ok)' : c.alarm_enabled ? 'var(--warn)' : '';
+    $('aSent').textContent = c.state.last_sent_at ? new Date(c.state.last_sent_at * 1000).toLocaleString() : 'never';
+    $('aErr').textContent = c.state.last_error ? `Last failure ${ago(c.state.last_error_at)}: ${c.state.last_error}` : '';
+    $('aLinks').textContent = c.public_url ? `Emails link to ${c.public_url}.`
+      : 'Tip: set the Public URL under Single sign-on and alarm emails will include a link to replay the moment the audio dropped.';
+  }
+  function alarmBody() {
+    const f = $('alarmForm'), b = {};
+    A_KEYS.forEach((k) => (b[k] = f[k].value.trim()));
+    ['outage_threshold_seconds', 'silence_db', 'alarm_delay_seconds', 'smtp_port'].forEach((k) => (b[k] = Number(b[k])));
+    b.alarm_enabled = f.alarm_enabled.checked; b.alarm_on_recovery = f.alarm_on_recovery.checked;
+    b.smtp_password = f.smtp_password.value || null;
+    return b;
+  }
+  $('alarmForm').smtp_security.addEventListener('change', (e) => {
+    const port = $('alarmForm').smtp_port;
+    if (['587', '465', '25', ''].includes(port.value)) port.value = { starttls: 587, ssl: 465, none: 25 }[e.target.value];
+  });
+  $('alarmForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      const r = await api('/api/admin/alarms', 'PUT', alarmBody());
+      toast(r.restarted ? 'Saved. Recorders restarted with the new silence level' : 'Alarm settings saved'); loadAlarms();
+    } catch (er) { toast(er.message, true); }
+  });
+  $('alarmTest').onclick = async () => {
+    const out = $('alarmTestResult'), btn = $('alarmTest');
+    btn.disabled = true; btn.textContent = 'Sending…'; out.textContent = ''; out.style.color = '';
+    try {
+      const r = await api('/api/admin/alarms/test', 'POST', alarmBody());
+      out.textContent = `✓ Sent to ${r.to.join(', ')}. Check the inbox (and spam folder).`; out.style.color = 'var(--ok)';
+    } catch (er) { out.textContent = er.message; out.style.color = 'var(--live)'; }
+    finally { btn.disabled = false; btn.textContent = 'Send test email'; }
+  };
+  $('smtpPwClear').onclick = async () => {
+    if (!confirm('Forget the saved SMTP password?')) return;
+    await api('/api/admin/alarms/password', 'DELETE'); toast('Password removed'); loadAlarms();
+  };
+  setInterval(() => { if ($('tab-alarms').classList.contains('active')) loadAlarms(true); }, 10000);
 
   // ---------- single sign-on ----------
   async function loadSSO() {
