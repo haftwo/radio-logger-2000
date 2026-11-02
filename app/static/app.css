@@ -316,31 +316,31 @@ dialog input[type=time] { width: auto; }
 .page-h { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); font-weight: 600; }
 .small { font-size: 13px; }
 .bad { color: var(--live); }
-.health-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 14px; }
-.hcard { display: flex; gap: 14px; align-items: flex-start; background: var(--panel); border: 1px solid var(--line);
-  border-left: 4px solid var(--muted); border-radius: var(--radius); padding: 14px; cursor: pointer; transition: border-color .2s, background .2s; }
+.health-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
+.wrap > .panel-head { margin-bottom: 8px; }
+.hcard { display: flex; gap: 10px; align-items: center; background: var(--panel); border: 1px solid var(--line);
+  border-left: 3px solid var(--muted); border-radius: 10px; padding: 7px 10px 7px 8px; cursor: pointer; transition: border-color .2s, background .2s; }
 .hcard:hover { background: var(--panel-2); }
-.hcard .hlogo { width: 52px; height: 52px; flex-shrink: 0; border-radius: 10px; background: #ffffff0d; display: grid; place-items: center; overflow: hidden; }
-.hcard .hlogo img { max-width: 90%; max-height: 90%; object-fit: contain; }
+.hcard .hlogo { width: 32px; height: 32px; flex-shrink: 0; border-radius: 7px; background: #ffffff0d; display: grid; place-items: center; overflow: hidden; }
+.hcard .hlogo img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.hcard .hlogo .ph { font-size: 12px; }
 .hcard .hbody { min-width: 0; flex: 1; }
-.hcard .hname { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hstate { display: flex; align-items: center; gap: 7px; margin: 4px 0 8px; font-size: 13px; flex-wrap: wrap; }
-.hstate .muted { font-size: 12px; }
-.hdot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
-.hmeta { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
-.hmeta b { color: var(--text); font-family: var(--mono); font-weight: 600; }
-.hcard .hint { margin-top: 6px; }
+.hcard .hname { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hcard .hsub { font-size: 12px; color: var(--muted); font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hstate { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; white-space: nowrap; color: var(--muted); }
+.hdot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
 .hcard.healthy { border-left-color: var(--ok); }
-.hcard.healthy .hdot { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+.hcard.healthy .hstate { color: var(--ok); }
+.hcard.healthy .hdot { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
 .hcard.quiet { border-left-color: var(--warn); }
+.hcard.quiet .hstate { color: var(--warn); }
 .hcard.quiet .hdot { background: var(--warn); }
-.hcard.starting .hdot { background: var(--accent-2); animation: pulse 1.2s infinite; }
 .hcard.starting { border-left-color: var(--accent-2); }
-.hcard.silent, .hcard.down { border-color: var(--live); border-left-color: var(--live); background: #ff4d5e14; }
-.hcard.silent .hdot, .hcard.down .hdot { background: var(--live); box-shadow: 0 0 10px var(--live); animation: pulse 1s infinite; }
-.hcard.silent .hstate b, .hcard.down .hstate b { color: var(--live); }
-.hcard.disabled { opacity: .55; }
-
+.hcard.starting .hdot { background: var(--accent-2); animation: pulse 1.2s infinite; }
+.hcard.silent, .hcard.down { border-color: var(--live); border-left-color: var(--live); background: #ff4d5e1a; }
+.hcard.silent .hstate, .hcard.down .hstate, .hcard .htimer { color: var(--live); }
+.hcard.silent .hdot, .hcard.down .hdot { background: var(--live); box-shadow: 0 0 8px var(--live); animation: pulse 1s infinite; }
+.hcard.disabled { opacity: .5; }
 .out-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
 .out-summary div { background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
 .out-summary span { display: block; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
