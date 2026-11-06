@@ -6,6 +6,7 @@
     me: null, tz: undefined, streams: [], stream: null, date: null, day: null,
     mode: 'idle',            // idle | replay | live
     chunkIdx: -1, peaks: null, pendingSeek: null, scrubTs: null,
+    markIn: null, markOut: null, clipStopAt: null,   // clip points (epoch seconds)
     npTrackId: null, liveTrack: null,
     actx: null, analyser: null, levels: [],
     zoom: 1, viewStart: 0, follow: true, lastPan: 0,
@@ -86,6 +87,7 @@
 
   async function selectStream(s) {
     stopPlayback();
+    S.markIn = S.markOut = null; updateClipUI();
     S.stream = s; store.set('stream', s.id);
     renderStations();
     $('stLogo').innerHTML = logoHtml(s);
@@ -301,6 +303,7 @@
   }
 
   function playAt(ts) {
+    S.clipStopAt = null;
     const hit = findChunk(ts);
     if (!hit) { toast('Nothing recorded at that time'); return; }
     if (S.mode === 'live') stopPlayback();
@@ -567,6 +570,22 @@
       });
       g.textBaseline = 'alphabetic';
     }
+    // clip in/out: shaded range plus flagged lines
+    if (c && (S.markIn != null || S.markOut != null)) {
+      const a = S.markIn != null ? S.markIn - c.start : null, b = S.markOut != null ? S.markOut - c.start : null;
+      if (a != null && b != null && b > vs && a < ve) {
+        g.fillStyle = 'rgba(255,224,102,0.14)';
+        g.fillRect(Math.max(0, xOf(a)), 0, Math.min(w, xOf(b)) - Math.max(0, xOf(a)), h - 16);
+      }
+      g.font = '700 10px system-ui, sans-serif';
+      [[a, 'IN', 0], [b, 'OUT', 1]].forEach(([r, lbl, right]) => {
+        if (r == null || r < vs || r > ve) return;
+        const x = xOf(r); g.fillStyle = '#ffe066'; g.fillRect(x - 1, 0, 2, h - 16);
+        const tw = g.measureText(lbl).width + 8;
+        g.fillRect(right ? x - tw : x, h - 32, tw, 14);
+        g.fillStyle = '#0b1020'; g.fillText(lbl, (right ? x - tw : x) + 4, h - 21);
+      });
+    }
     if (ct >= vs && ct <= ve) { g.fillStyle = '#fff'; g.fillRect(xOf(ct), 0, 2, h - 16); }
     $('zoomLvl').textContent = (S.zoom < 10 ? S.zoom.toFixed(S.zoom % 1 ? 1 : 0) : Math.round(S.zoom)) + '×';
   }
@@ -608,6 +627,22 @@
         head.style.display = 'block'; head.style.left = ((ts - v.start) / v.span) * 100 + '%';
       } else head.style.display = 'none';
     } else head.style.display = 'none';
+    const sel = $('tlClip');
+    if (S.day && S.markIn != null && S.markOut != null) {
+      const v = tlView(), l = (S.markIn - v.start) / v.span, r = (S.markOut - v.start) / v.span;
+      if (r < 0 || l > 1) sel.style.display = 'none';
+      else {
+        sel.style.display = 'block';
+        sel.style.left = Math.max(0, l) * 100 + '%'; sel.style.width = (Math.min(1, r) - Math.max(0, l)) * 100 + '%';
+      }
+    } else sel.style.display = 'none';
+    if (S.clipStopAt != null && ts != null && S.mode === 'replay' && ts >= S.clipStopAt) {
+      audio.pause(); S.clipStopAt = null;
+    }
+    const replay = S.mode === 'replay';
+    $('markIn').disabled = $('markOut').disabled = !replay;
+    $('clipPlay').disabled = $('clipDl').disabled = !(S.markIn != null && S.markOut != null);
+    $('clipClear').disabled = S.markIn == null && S.markOut == null;
     $('clock').textContent = ts ? fmtTime(ts) : '--:--:--';
     if (S.mode === 'replay') $('clockSub').textContent = `${S.date} · ${audio.paused ? 'paused' : 'playing'}`;
     else if (S.mode === 'live') $('clockSub').textContent = 'live · ' + (audio.paused ? 'buffering' : 'on air');
@@ -656,6 +691,7 @@
   const SEEK_MS = 50, LOAD_MS = 250;   // throttle in-chunk seeks and cross-chunk loads
   let scrub = null;
   function scrubStart(src) {
+    S.clipStopAt = null;
     scrub = { src, wasPaused: S.mode === 'replay' && audio.paused, lastSeek: 0, lastLoad: 0, timer: null, ts: null };
   }
   function keepWaveInView(t) {          // keep the waveform playhead visible while scrubbing
@@ -772,13 +808,25 @@
   }, { passive: false });
   let drag = null;
   const waveTimeAt = (e) => Math.min(waveDur(), S.viewStart + fracOf(e) * (waveDur() / S.zoom));
+  // which clip marker (if any) is under the pointer on the waveform
+  function markerAt(e) {
+    const c = S.day && S.day.chunks[S.chunkIdx]; if (!c) return null;
+    const r = ww.getBoundingClientRect(), len = waveDur() / S.zoom;
+    const near = (ts) => ts != null && Math.abs(((ts - c.start - S.viewStart) / len) * r.width - (e.clientX - r.left)) <= 6;
+    return near(S.markOut) ? 'out' : near(S.markIn) ? 'in' : null;
+  }
   ww.addEventListener('pointerdown', (e) => {
     if (S.mode !== 'replay' || !S.peaks || e.button > 0) return;
-    drag = { x: e.clientX, vs: S.viewStart, moved: false, pan: e.shiftKey };
+    drag = { x: e.clientX, vs: S.viewStart, moved: false, pan: e.shiftKey, marker: e.shiftKey ? null : markerAt(e) };
     ww.setPointerCapture(e.pointerId);
   });
   ww.addEventListener('pointermove', (e) => {
-    if (!drag) return;
+    if (!drag) { ww.classList.toggle('on-marker', S.mode === 'replay' && !!markerAt(e)); return; }
+    if (drag.marker) {                                  // drag an in/out flag to adjust it
+      const c = S.day.chunks[S.chunkIdx]; drag.moved = true;
+      setMark(drag.marker, c.start + waveTimeAt(e), true);
+      return;
+    }
     const dx = e.clientX - drag.x;
     if (!drag.moved && Math.abs(dx) > 4) {
       drag.moved = true;
@@ -800,6 +848,7 @@
     if (!drag) return;
     ww.classList.remove('dragging', 'panning');
     if (!drag.moved) {               // plain click = seek
+      S.clipStopAt = null;
       audio.currentTime = waveTimeAt(e);
       S.follow = true;
     } else if (scrub) {
@@ -999,6 +1048,58 @@
     gotoDateTime(d, t.length === 5 ? t + ':00' : t);
   });
 
+  // ---- clip: mark an in and out point, then download that section as one MP3 ----
+  const fmtLen = (sec) => {
+    sec = Math.round(sec); const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), x = sec % 60;
+    return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0');
+  };
+  function updateClipUI() {
+    const info = $('clipInfo'), a = S.markIn, b = S.markOut;
+    info.classList.toggle('set', a != null || b != null);
+    if (a == null && b == null) info.textContent = 'Mark an in and out point on the waveform';
+    else if (b == null) info.textContent = `In ${fmtTime(a)} · now set the out point`;
+    else if (a == null) info.textContent = `Out ${fmtTime(b)} · now set the in point`;
+    else info.textContent = `${fmtTime(a)} → ${fmtTime(b)}  (${fmtLen(b - a)})`;
+  }
+  function setMark(which, ts, quiet) {
+    if (ts == null) return;
+    if (which === 'in') S.markIn = ts; else S.markOut = ts;
+    if (S.markIn != null && S.markOut != null && S.markOut < S.markIn) {   // keep in before out
+      [S.markIn, S.markOut] = [S.markOut, S.markIn];
+      if (drag && drag.marker) drag.marker = drag.marker === 'in' ? 'out' : 'in';
+    }
+    updateClipUI();
+    if (!quiet && S.markIn != null && S.markOut != null && S.markOut - S.markIn < 0.5) toast('That clip is very short — move the out point later', true);
+  }
+  function clearMarks() { S.markIn = S.markOut = null; S.clipStopAt = null; updateClipUI(); }
+  $('markIn').onclick = () => S.mode === 'replay' && setMark('in', currentTs());
+  $('markOut').onclick = () => S.mode === 'replay' && setMark('out', currentTs());
+  $('clipClear').onclick = clearMarks;
+  $('clipPlay').onclick = () => {
+    if (S.markIn == null || S.markOut == null) return;
+    playAt(S.markIn); S.clipStopAt = S.markOut;
+  };
+  $('clipDl').onclick = async () => {
+    const a = S.markIn, b = S.markOut;
+    if (a == null || b == null) return;
+    const btn = $('clipDl'), label = btn.lastChild.textContent;
+    btn.disabled = true; btn.lastChild.textContent = 'Cutting…';
+    toast(`Cutting ${fmtLen(b - a)} of audio…`);
+    try {
+      const r = await fetch(`/api/streams/${S.stream.id}/clip?start=${a.toFixed(3)}&end=${b.toFixed(3)}`, { credentials: 'same-origin' });
+      if (r.status === 401) { location.href = '/login'; return; }
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+      const name = (/filename="?([^";]+)"?/.exec(r.headers.get('Content-Disposition') || '') || [])[1] || 'clip.mp3';
+      const url = URL.createObjectURL(await r.blob());
+      const link = document.createElement('a'); link.href = url; link.download = name;
+      document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      toast('Clip downloaded');
+    } catch (e) { toast('Clip failed: ' + e.message, true); }
+    finally { btn.lastChild.textContent = label; btn.disabled = false; }
+  };
+  updateClipUI();
+
   // ---- playback speed (replay only; live always runs at 1×) ----
   S.rate = 1;
   try { const r = Number(localStorage.getItem('rl.rate')); if ([1, 2, 5, 10].includes(r)) S.rate = r; } catch { /* storage unavailable */ }
@@ -1053,6 +1154,9 @@
     if (e.key === '+' || e.key === '=') zoomBtn(2);
     if (e.key === '-' || e.key === '_') zoomBtn(0.5);
     if (e.key === '0') { setZoom(1); S.follow = true; }
+    if ((e.key === 'i' || e.key === 'I') && !e.ctrlKey && !e.metaKey) $('markIn').click();
+    if ((e.key === 'o' || e.key === 'O') && !e.ctrlKey && !e.metaKey) $('markOut').click();
+    if (e.key === 'Escape' && (S.markIn != null || S.markOut != null)) clearMarks();
   });
 
   boot().catch((e) => toast(e.message, true));

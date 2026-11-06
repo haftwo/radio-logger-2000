@@ -67,7 +67,7 @@
             <button class="btn sm" id="tlFit" title="Show the whole day">Day</button>
           </div>
         </div>
-        <div class="timeline" id="timeline"><div class="head" id="tlHead"></div><div class="hover" id="tlHover"><span></span></div></div>
+        <div class="timeline" id="timeline"><div class="clipsel" id="tlClip"></div><div class="head" id="tlHead"></div><div class="hover" id="tlHover"><span></span></div></div>
 
         <div class="wave-wrap" id="waveWrap">
           <canvas id="wave"></canvas>
@@ -80,6 +80,17 @@
           </div>
           <div class="hint wavehelp" id="waveHelp" hidden>Scroll or +/− to zoom · click to seek · drag to scrub · Shift+drag to pan</div>
           <div class="loading" id="waveMsg">Pick a time on the timeline above, or press Listen live.</div>
+        </div>
+
+        <div class="clipbar" id="clipBar">
+          <span class="muted clip-title">Clip</span>
+          <button class="btn sm" id="markIn" title="Set the in point at the playhead (I)">[ In</button>
+          <button class="btn sm" id="markOut" title="Set the out point at the playhead (O)">Out ]</button>
+          <span class="mono clip-info" id="clipInfo">Mark an in and out point on the waveform</span>
+          <div class="spacer"></div>
+          <button class="btn sm" id="clipPlay" title="Play from the in point and stop at the out point">Play clip</button>
+          <button class="btn sm" id="clipClear" title="Clear both points (Esc)">Clear</button>
+          <button class="btn sm primary" id="clipDl" title="Download the marked section as an MP3"><svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>Download MP3</button>
         </div>
 
         <div class="transport">

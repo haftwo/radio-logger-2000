@@ -5,6 +5,7 @@ import datetime as dt
 import io
 import logging
 import os
+import tempfile
 import time
 from contextlib import asynccontextmanager
 
@@ -13,6 +14,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel, Field
+from starlette.background import BackgroundTask
 from starlette.middleware.sessions import SessionMiddleware
 
 from urllib.parse import urlencode, urlparse
@@ -331,6 +333,37 @@ def chunk_audio(stream_id: int, date: str, name: str, download: int = 0, user=De
     fname = f"{s['slug']}-{name}" if download else None
     return FileResponse(p, media_type="audio/mpeg", filename=fname,
                         content_disposition_type="attachment" if download else "inline")
+
+
+_clip_slots = asyncio.Semaphore(2)  # clip cuts are CPU work on the Unraid box; don't run many at once
+
+
+@app.get("/api/streams/{stream_id}/clip")
+async def clip(stream_id: int, start: float, end: float, user=Depends(auth.require_user)):
+    """Cut the audio between two moments (epoch seconds) into one MP3, across chunks if needed."""
+    s = get_stream_or_404(stream_id)
+    if not (end > start and end - start >= 0.5):
+        raise HTTPException(400, "The out point must be after the in point")
+    if end - start > audio.CLIP_MAX_SECONDS:
+        raise HTTPException(400, f"Clips are limited to {audio.CLIP_MAX_SECONDS // 3600} hours")
+    parts = audio.clip_parts(s["slug"], start, end)
+    if not parts:
+        raise HTTPException(404, "Nothing recorded in that range")
+    if _clip_slots.locked():
+        raise HTTPException(429, "Another clip is being cut — try again in a moment")
+    fd, out = tempfile.mkstemp(prefix="rl-clip-", suffix=".mp3")
+    os.close(fd)
+    try:
+        async with _clip_slots:
+            await audio.cut_clip(parts, out, db.setting_int("bitrate_kbps"))
+    except Exception as e:
+        os.remove(out)
+        logging.getLogger("radiologger.clip").warning("clip cut failed: %s", e)
+        raise HTTPException(500, "Couldn't cut that clip")
+    a, b = dt.datetime.fromtimestamp(start), dt.datetime.fromtimestamp(end)
+    fname = f"{s['slug']}-{a:%Y%m%d-%H%M%S}-to-{b:%H%M%S}.mp3"
+    return FileResponse(out, media_type="audio/mpeg", filename=fname,
+                        background=BackgroundTask(os.remove, out))
 
 
 @app.get("/api/streams/{stream_id}/peaks/{date}/{name}")

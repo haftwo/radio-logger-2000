@@ -197,3 +197,46 @@ def disk_usage() -> dict:
         return {"total": u.total, "free": u.free, "logger": used_by_logger}
     except OSError:
         return {"total": 0, "free": 0, "logger": 0}
+
+
+CLIP_MAX_SECONDS = 4 * 3600  # longest clip a user can cut in one go
+
+
+def clip_parts(slug: str, start: float, end: float) -> list[tuple[str, float, float]]:
+    """Chunks covering [start, end) as (path, inpoint, outpoint) in seconds within each file."""
+    parts = []
+    day = dt.date.fromtimestamp(start) - dt.timedelta(days=1)  # a chunk can begin before midnight
+    last = dt.date.fromtimestamp(end)
+    while day <= last:
+        for c in list_day(slug, day):
+            c0, c1 = c["start"], c["start"] + (c["duration"] or 0)
+            if c1 <= start or c0 >= end or c1 <= c0:
+                continue
+            parts.append((os.path.join(day_dir(slug, day), c["file"]),
+                          max(0.0, start - c0), min(c1, end) - c0))
+        day += dt.timedelta(days=1)
+    parts.sort(key=lambda p: p[0])
+    return parts
+
+
+async def cut_clip(parts: list[tuple[str, float, float]], out_path: str, bitrate_kbps: int) -> None:
+    """Join the chunk pieces with ffmpeg's concat demuxer and re-encode to one MP3."""
+    list_path = out_path + ".txt"
+    with open(list_path, "w") as f:
+        for path, a, b in parts:
+            safe = path.replace("'", "'\\''")
+            f.write(f"file '{safe}'\ninpoint {a:.3f}\noutpoint {b:.3f}\n")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error", "-y",
+            "-f", "concat", "-safe", "0", "-i", list_path, "-vn", "-map", "0:a:0",
+            "-c:a", "libmp3lame", "-b:a", f"{int(bitrate_kbps)}k", "-f", "mp3", out_path,
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+        _, err = await proc.communicate()
+        if proc.returncode != 0 or not os.path.getsize(out_path):
+            raise RuntimeError((err or b"").decode(errors="replace")[-300:] or "ffmpeg failed")
+    finally:
+        try:
+            os.remove(list_path)
+        except OSError:
+            pass

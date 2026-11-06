@@ -368,3 +368,14 @@ table.outages tr.ongoing td { background: #ff4d5e14; }
 .speed button:hover:not(:disabled) { color: var(--text, #e8ecf8); }
 .speed button.active { background: var(--accent, #5b6cff); color: #fff; }
 .speed button:disabled { opacity: .4; cursor: default; }
+
+/* clip in/out marking */
+.clipbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; padding: 6px 8px;
+  background: var(--bg-2); border: 1px solid var(--line); border-radius: 10px; }
+.clipbar .clip-title { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; margin-right: 2px; }
+.clipbar .clip-info { font-size: 12px; color: var(--muted); }
+.clipbar .clip-info.set { color: #ffe066; }
+.clipbar .btn svg { width: 14px; height: 14px; fill: currentColor; }
+.timeline .clipsel { position: absolute; top: 0; bottom: 0; background: #ffe0662e; border-left: 2px solid #ffe066;
+  border-right: 2px solid #ffe066; pointer-events: none; display: none; z-index: 1; }
+.wave-wrap.on-marker { cursor: col-resize; }
