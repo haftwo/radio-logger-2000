@@ -184,8 +184,8 @@ pre.log { background: var(--bg); border: 1px solid var(--line); border-radius: 8
 .goto { display: flex; gap: 6px; align-items: center; }
 .goto input[type=time] { width: auto; color-scheme: dark; }
 .wave-wrap { height: 170px; touch-action: none; }
-.wave-wrap.zoomed { cursor: grab; }
-.wave-wrap.dragging { cursor: grabbing; }
+.wave-wrap.dragging { cursor: ew-resize; }
+.wave-wrap.panning { cursor: grabbing; }
 .wave-wrap .zoom { position: absolute; top: 6px; right: 8px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
 .btn.sm { height: 28px; padding: 0 10px; font-size: 13px; }
 .btn.icon.sm { width: 28px; height: 28px; font-size: 16px; line-height: 1; }
@@ -213,8 +213,8 @@ dialog input[type=time] { width: auto; }
 .tl-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; font-size: 12px; }
 .zoom.inline { position: static; display: flex; align-items: center; gap: 6px; color: var(--muted); }
 .timeline { height: 62px; touch-action: none; }
-.timeline.zoomed { cursor: grab; }
-.timeline.dragging { cursor: grabbing; }
+.timeline.dragging { cursor: ew-resize; }
+.timeline.panning { cursor: grabbing; }
 .timeline .song { top: 3px; height: 6px; overflow: hidden; }
 .timeline .song.wide { height: 16px; top: 2px; font-size: 10px; line-height: 16px; padding: 0 5px; color: #0b1020; font-weight: 700; white-space: nowrap; text-overflow: ellipsis; }
 .timeline .chunk { top: 20px; }
@@ -360,3 +360,11 @@ table.outages tr.ongoing td { background: #ff4d5e14; }
   padding: 2px 8px; white-space: nowrap; cursor: default; }
 .login-ver { display: inline-block; margin-top: 14px; }
 @media (max-width: 600px) { .topbar .ver { display: none; } }
+
+/* playback speed selector */
+.speed { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.speed button { background: none; border: 0; color: var(--muted); padding: 6px 10px; font: 600 12px var(--mono); cursor: pointer; }
+.speed button + button { border-left: 1px solid var(--line); }
+.speed button:hover:not(:disabled) { color: var(--text, #e8ecf8); }
+.speed button.active { background: var(--accent, #5b6cff); color: #fff; }
+.speed button:disabled { opacity: .4; cursor: default; }
