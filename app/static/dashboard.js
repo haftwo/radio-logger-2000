@@ -5,7 +5,7 @@
   const S = {
     me: null, tz: undefined, streams: [], stream: null, date: null, day: null,
     mode: 'idle',            // idle | replay | live
-    chunkIdx: -1, peaks: null, pendingSeek: null,
+    chunkIdx: -1, peaks: null, pendingSeek: null, scrubTs: null,
     npTrackId: null, liveTrack: null,
     actx: null, analyser: null, levels: [],
     zoom: 1, viewStart: 0, follow: true, lastPan: 0,
@@ -351,6 +351,7 @@
   });
 
   function currentTs() {
+    if (S.scrubTs != null) return S.scrubTs;   // timeline drag in progress: show where the pointer is
     if (S.mode === 'live') return Date.now() / 1000;
     if (S.mode === 'replay' && S.day.chunks[S.chunkIdx]) return S.day.chunks[S.chunkIdx].start + (audio.currentTime || 0);
     return null;
@@ -651,30 +652,94 @@
     S.tlFollow = false; S.tlLastPan = Date.now();
     renderTimelineSoon();
   }, { passive: false });
+  // ---- scrubbing: drag across the timeline or waveform and the audio follows the pointer ----
+  const SEEK_MS = 50, LOAD_MS = 250;   // throttle in-chunk seeks and cross-chunk loads
+  let scrub = null;
+  function scrubStart(src) {
+    scrub = { src, wasPaused: S.mode === 'replay' && audio.paused, lastSeek: 0, lastLoad: 0, timer: null, ts: null };
+  }
+  function keepWaveInView(t) {          // keep the waveform playhead visible while scrubbing
+    const len = waveDur() / S.zoom;
+    if (t < S.viewStart || t > S.viewStart + len) { S.viewStart = t - len / 2; clampView(); }
+  }
+  function seekInChunk(t, force) {
+    const now = Date.now();
+    if (!force && now - scrub.lastSeek < SEEK_MS) return;
+    scrub.lastSeek = now;
+    if (audio.readyState < 1) S.pendingSeek = Math.max(0, t);   // chunk still loading: seek once it's ready
+    else try { audio.currentTime = Math.max(0, t); } catch { /* not seekable yet */ }
+    if (audio.paused) { ensureAudioGraph(); audio.play().catch(() => {}); }  // audible while dragging
+  }
+  // timeline scrub: may cross chunk boundaries, so loads are throttled with a trailing call
+  function scrubTimelineTo(ts, final) {
+    scrub.ts = ts;
+    const hit = findChunk(ts);
+    if (!hit) return;
+    if (S.mode === 'replay' && hit.i === S.chunkIdx) {
+      seekInChunk(hit.offset, final); keepWaveInView(hit.offset);
+      return;
+    }
+    clearTimeout(scrub.timer);
+    const wait = LOAD_MS - (Date.now() - scrub.lastLoad);
+    if (final || wait <= 0) {
+      scrub.lastLoad = Date.now();
+      if (S.mode === 'live') stopPlayback();
+      loadChunk(hit.i, hit.offset, true);
+    } else {
+      scrub.timer = setTimeout(() => scrub && scrubTimelineTo(scrub.ts, false), wait);
+    }
+  }
+  function scrubEnd() {
+    if (!scrub) return;
+    clearTimeout(scrub.timer);
+    if (scrub.wasPaused) audio.pause();   // leave it paused if it was paused before the drag
+    S.scrubTs = null; scrub = null;
+  }
+
   let tlDrag = null;
-  tl.addEventListener('pointerdown', (e) => { if (S.day) { tlDrag = { x: e.clientX, start: tlView().start, moved: false }; tl.setPointerCapture(e.pointerId); } });
+  tl.addEventListener('pointerdown', (e) => {
+    if (!S.day || e.button > 0) return;
+    tlDrag = { x: e.clientX, start: tlView().start, moved: false, pan: e.shiftKey };
+    tl.setPointerCapture(e.pointerId);
+  });
   tl.addEventListener('pointermove', (e) => {
     if (!tlDrag) return;
     const dx = e.clientX - tlDrag.x;
-    if (Math.abs(dx) > 4) tlDrag.moved = true;
-    const v = tlView();
-    if (tlDrag.moved && v.span < v.full) {
-      tl.classList.add('dragging');
-      S.tlStart = tlDrag.start - (dx / tl.clientWidth) * v.span;
-      S.tlFollow = false; S.tlLastPan = Date.now();
-      renderTimelineSoon();
+    if (!tlDrag.moved && Math.abs(dx) > 4) {
+      tlDrag.moved = true;
+      if (!tlDrag.pan) scrubStart('tl');
     }
+    if (!tlDrag.moved) return;
+    const v = tlView();
+    if (tlDrag.pan) {                                   // Shift+drag = pan the zoomed timeline
+      if (v.span < v.full) {
+        tl.classList.add('panning');
+        S.tlStart = tlDrag.start - (dx / tl.clientWidth) * v.span;
+        S.tlFollow = false; S.tlLastPan = Date.now();
+        renderTimelineSoon();
+      }
+      return;
+    }
+    tl.classList.add('dragging');                       // drag = scrub
+    const ts = tsFromEvent(e);
+    S.scrubTs = ts; S.tlFollow = false; S.tlLastPan = Date.now();
+    scrubTimelineTo(ts, false);
   });
-  tl.addEventListener('pointerup', (e) => {
+  const tlUp = (e) => {
     if (!tlDrag) return;
-    tl.classList.remove('dragging');
+    tl.classList.remove('dragging', 'panning');
     if (!tlDrag.moved) {
       const song = e.target.closest && e.target.closest('.song');
       playAt(song ? Number(song.dataset.ts) : tsFromEvent(e));
       S.tlFollow = true;
+    } else if (scrub) {
+      scrubTimelineTo(tsFromEvent(e), true);
+      scrubEnd(); S.tlFollow = true;
     }
     tlDrag = null;
-  });
+  };
+  tl.addEventListener('pointerup', tlUp);
+  tl.addEventListener('pointercancel', tlUp);
   $('tlIn').onclick = () => { tlZoom(0.25, playheadFrac()); S.tlFollow = true; };
   $('tlOut').onclick = () => tlZoom(4, playheadFrac());
   $('tlFit').onclick = () => { tlFit(); S.tlFollow = true; };
@@ -706,30 +771,45 @@
     }
   }, { passive: false });
   let drag = null;
+  const waveTimeAt = (e) => Math.min(waveDur(), S.viewStart + fracOf(e) * (waveDur() / S.zoom));
   ww.addEventListener('pointerdown', (e) => {
-    if (S.mode !== 'replay' || !S.peaks) return;
-    drag = { x: e.clientX, vs: S.viewStart, moved: false };
+    if (S.mode !== 'replay' || !S.peaks || e.button > 0) return;
+    drag = { x: e.clientX, vs: S.viewStart, moved: false, pan: e.shiftKey };
     ww.setPointerCapture(e.pointerId);
   });
   ww.addEventListener('pointermove', (e) => {
     if (!drag) return;
     const dx = e.clientX - drag.x;
-    if (Math.abs(dx) > 4) drag.moved = true;
-    if (drag.moved && S.zoom > 1) {
-      ww.classList.add('dragging');
-      S.viewStart = drag.vs - (dx / ww.clientWidth) * (waveDur() / S.zoom); clampView();
-      S.follow = false; S.lastPan = Date.now();
+    if (!drag.moved && Math.abs(dx) > 4) {
+      drag.moved = true;
+      if (!drag.pan) scrubStart('wave');
     }
+    if (!drag.moved) return;
+    S.follow = false; S.lastPan = Date.now();
+    if (drag.pan) {                                     // Shift+drag = pan the zoomed waveform
+      if (S.zoom > 1) {
+        ww.classList.add('panning');
+        S.viewStart = drag.vs - (dx / ww.clientWidth) * (waveDur() / S.zoom); clampView();
+      }
+      return;
+    }
+    ww.classList.add('dragging');                       // drag = scrub
+    seekInChunk(waveTimeAt(e), false);
   });
-  ww.addEventListener('pointerup', (e) => {
+  const waveUp = (e) => {
     if (!drag) return;
-    ww.classList.remove('dragging');
+    ww.classList.remove('dragging', 'panning');
     if (!drag.moved) {               // plain click = seek
-      audio.currentTime = S.viewStart + fracOf(e) * (waveDur() / S.zoom);
+      audio.currentTime = waveTimeAt(e);
       S.follow = true;
+    } else if (scrub) {
+      seekInChunk(waveTimeAt(e), true);
+      scrubEnd(); S.follow = true; S.lastPan = 0;
     }
     drag = null;
-  });
+  };
+  ww.addEventListener('pointerup', waveUp);
+  ww.addEventListener('pointercancel', waveUp);
   const zoomBtn = (f) => {          // buttons/keys zoom around the playhead and keep following it
     const len = waveDur() / S.zoom, rel = (audio.currentTime - S.viewStart) / len;
     setZoom(S.zoom * f, rel >= 0 && rel <= 1 ? rel : 0.5); S.follow = true;
@@ -918,6 +998,30 @@
     if (d > today()) return toast('That date is in the future');
     gotoDateTime(d, t.length === 5 ? t + ':00' : t);
   });
+
+  // ---- playback speed (replay only; live always runs at 1×) ----
+  S.rate = 1;
+  try { const r = Number(localStorage.getItem('rl.rate')); if ([1, 2, 5, 10].includes(r)) S.rate = r; } catch { /* storage unavailable */ }
+  function applyRate() {
+    const r = S.mode === 'live' ? 1 : S.rate;
+    audio.preservesPitch = true;            // keep voices intelligible when sped up
+    audio.defaultPlaybackRate = r;          // survives loading the next chunk
+    if (audio.playbackRate !== r) audio.playbackRate = r;
+    document.querySelectorAll('#speed button').forEach((b) => {
+      b.classList.toggle('active', Number(b.dataset.rate) === r);
+      b.disabled = S.mode === 'live';
+    });
+  }
+  function setRate(r) {
+    S.rate = r;
+    try { localStorage.setItem('rl.rate', String(r)); } catch { /* storage unavailable */ }
+    applyRate();
+  }
+  document.querySelectorAll('#speed button').forEach((b) => (b.onclick = () => setRate(Number(b.dataset.rate))));
+  // a new src resets the rate in some browsers, so re-apply whenever media loads
+  audio.addEventListener('loadstart', applyRate);
+  audio.addEventListener('play', applyRate);
+  applyRate();
 
   const seekBy = (s) => { if (S.mode === 'replay') audio.currentTime = Math.max(0, audio.currentTime + s); };
   $('back').onclick = () => seekBy(-10);
