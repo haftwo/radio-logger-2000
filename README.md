@@ -11,7 +11,7 @@ Records internet radio streams to disk in clock-aligned chunks and gives you a w
 - **Music stations** – show the cover art and track for whatever moment you're replaying, plus a "Played on this day" list you can click to jump to a song. Track changes are marked on the timeline and waveform.
   - *Top played* tab: the top 10 songs for the selected day and for the 7 days ending on it, with play counts. Click a song to jump to the last time it played.
   - *Export*: download played songs as CSV (date, time, station, artist, title, album, tags, duration, source) for the day, the 7 days to that day, or everything logged.
-- **Outages** – live health indicator for every stream (Healthy / Quiet / Silent / No signal) with 24-hour and 7-day availability, plus a log of every outage: any silence or loss of audio lasting more than 30 s (configurable). Filter by station and period, download as CSV, and jump straight to the moment it dropped with **Replay**.
+- **Outages** – live health indicator for every stream (Healthy / Quiet / Silent / No signal) with 24-hour and 7-day availability, plus a log of every outage: any silence or loss of audio lasting more than 30 s (configurable). Filter by station and period, download as CSV, and jump straight to the moment it dropped with **Replay**. Tick **Sound alarm** to have that browser beep while any stream is off air (with a **Silence alarm** button) and chime when it recovers.
 - **Admin** (admin role only)
   - *Streams*: add/edit/delete, enable/disable, restart a recorder, upload a station logo (click the logo), see the recorder log.
   - *Recording*: recordings folder, how long to keep audio, chunk size (1–60 min), MP3 bitrate, Shazam interval, and disk usage.

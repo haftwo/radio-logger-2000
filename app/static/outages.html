@@ -22,7 +22,14 @@
   <div class="panel-head">
     <h2 class="page-h">Stream health</h2>
     <div class="muted small" id="healthNote"></div>
+    <div class="head-actions">
+      <button class="btn sm danger" type="button" id="alarmAck" hidden title="Stop the sound for the current outage(s). It sounds again if another stream drops.">
+        <svg viewBox="0 0 24 24"><path d="M3.3 2 2 3.3l4.4 4.4A6.8 6.8 0 0 0 6 10v5l-2 2v1h13.7l3 3 1.3-1.3zM12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2m6-6.8V10c0-3.1-1.6-5.6-4.5-6.3V3a1.5 1.5 0 0 0-3 0v.7c-.5.1-.9.3-1.3.5z"/></svg>Silence alarm</button>
+      <label class="check alarm-toggle" title="Plays an alarm on this device while any stream is off air. Keep this page open.">
+        <input type="checkbox" id="alarmSound"> Sound alarm</label>
+    </div>
   </div>
+  <div class="alarm-banner" id="alarmArm" hidden>🔔 Sound alarm is on. Click anywhere on this page to arm it (browsers block sound until you interact).</div>
   <div class="health-grid" id="health"></div>
   <div id="noStreams" class="panel empty" hidden>No streams yet.</div>
 
