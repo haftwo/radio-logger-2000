@@ -91,10 +91,72 @@
     }).join('');
   }
 
+  // ---------- audible alarm (plays on this device, per browser) ----------
+  // Uses the Web Audio API so there's no sound file to ship. Browsers only allow sound after the
+  // user has interacted with the page, so after a reload we ask for one click to arm it.
+  const alarm = {
+    on: store.get('outages.alarmSound') === '1',
+    ctx: null, timer: null, offAir: [], acked: new Set(),
+    audio() {
+      if (!this.ctx) { try { this.ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch { return null; } }
+      return this.ctx;
+    },
+    armed() { return !!this.ctx && this.ctx.state === 'running'; },
+    async arm() {
+      const c = this.audio(); if (!c) return false;
+      if (c.state !== 'running') { try { await c.resume(); } catch { /* still blocked */ } }
+      this.refresh(); return this.armed();
+    },
+    tone(freq, start, len, vol = 0.18, type = 'square') {
+      const c = this.ctx, o = c.createOscillator(), g = c.createGain();
+      o.type = type; o.frequency.value = freq;
+      g.gain.setValueAtTime(0, start);
+      g.gain.linearRampToValueAtTime(vol, start + 0.01);
+      g.gain.setValueAtTime(vol, start + len - 0.03);
+      g.gain.linearRampToValueAtTime(0, start + len);
+      o.connect(g).connect(c.destination); o.start(start); o.stop(start + len + 0.02);
+    },
+    siren() {  // hi-lo x3, repeated every 2.5 s while an outage is open
+      if (!this.armed()) return;
+      const t = this.ctx.currentTime + 0.02;
+      for (let i = 0; i < 3; i++) { this.tone(880, t + i * 0.5, 0.25); this.tone(660, t + i * 0.5 + 0.25, 0.25); }
+    },
+    chime() {  // gentle rising chime when a stream comes back
+      if (!this.armed()) return;
+      const t = this.ctx.currentTime + 0.02;
+      [523, 659, 784].forEach((f, i) => this.tone(f, t + i * 0.15, 0.3, 0.12, 'sine'));
+    },
+    update(list) {
+      const now = list.filter((s) => s.health === 'silent' || s.health === 'down').map((s) => s.id);
+      if (this.on && this.offAir.some((id) => !now.includes(id))) this.chime();
+      this.offAir = now;
+      this.acked.forEach((id) => { if (!now.includes(id)) this.acked.delete(id); });  // re-alarm if it drops again
+      this.refresh();
+    },
+    refresh() {
+      const sounding = this.on && this.offAir.some((id) => !this.acked.has(id));
+      $('alarmArm').hidden = !this.on || this.armed();
+      $('alarmAck').hidden = !sounding;
+      if (sounding && !this.timer) { this.siren(); this.timer = setInterval(() => this.siren(), 2500); }
+      if (!sounding && this.timer) { clearInterval(this.timer); this.timer = null; }
+    },
+  };
+  $('alarmSound').checked = alarm.on;
+  $('alarmSound').addEventListener('change', async (e) => {
+    alarm.on = e.target.checked; store.set('outages.alarmSound', alarm.on ? '1' : '0');
+    if (alarm.on) {
+      if (await alarm.arm()) { alarm.chime(); toast('Sound alarm on. Keep this page open'); }
+      else toast('Your browser blocked sound. Click the page to arm it', true);
+    } else alarm.refresh();
+  });
+  $('alarmAck').addEventListener('click', () => { alarm.offAir.forEach((id) => alarm.acked.add(id)); alarm.refresh(); });
+  ['pointerdown', 'keydown'].forEach((ev) => document.addEventListener(ev, () => { if (alarm.on && !alarm.armed()) alarm.arm(); }));
+
   async function loadStatus() {
     status = await api('/api/outages/status');
     clockSkew = status.now - Date.now() / 1000;
     renderHealth();
+    alarm.update(status.streams);
     // refresh the log as soon as an outage opens or closes
     const ids = status.streams.filter((s) => s.health === 'silent' || s.health === 'down').map((s) => s.id).join(',');
     if (ids !== openIds) { openIds = ids; loadLog(); }
