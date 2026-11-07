@@ -734,8 +734,12 @@
 
   let tlDrag = null;
   tl.addEventListener('pointerdown', (e) => {
-    if (!S.day || e.button > 0) return;
-    tlDrag = { x: e.clientX, start: tlView().start, moved: false, pan: e.shiftKey };
+    // left button = scrub (Shift = pan); middle button = pan
+    if (!S.day || (e.button !== 0 && e.button !== 1)) return;
+    const mid = e.button === 1;
+    if (mid) e.preventDefault();                        // stop the browser's middle-click autoscroll
+    tlDrag = { x: e.clientX, start: tlView().start, moved: false, pan: mid || e.shiftKey, mid };
+    if (mid) tl.classList.add('panning');
     tl.setPointerCapture(e.pointerId);
   });
   tl.addEventListener('pointermove', (e) => {
@@ -764,7 +768,9 @@
   const tlUp = (e) => {
     if (!tlDrag) return;
     tl.classList.remove('dragging', 'panning');
-    if (!tlDrag.moved) {
+    if (tlDrag.mid) {                                   // middle-button pan never seeks
+      if (tlDrag.moved) S.tlLastPan = Date.now();
+    } else if (!tlDrag.moved) {
       const song = e.target.closest && e.target.closest('.song');
       playAt(song ? Number(song.dataset.ts) : tsFromEvent(e));
       S.tlFollow = true;
@@ -775,6 +781,9 @@
     tlDrag = null;
   };
   tl.addEventListener('pointerup', tlUp);
+  // swallow middle-click side effects (autoscroll, opening links in a new tab)
+  tl.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); });
+  tl.addEventListener('auxclick', (e) => { if (e.button === 1) e.preventDefault(); });
   tl.addEventListener('pointercancel', tlUp);
   $('tlIn').onclick = () => { tlZoom(0.25, playheadFrac()); S.tlFollow = true; };
   $('tlOut').onclick = () => tlZoom(4, playheadFrac());
@@ -816,8 +825,11 @@
     return near(S.markOut) ? 'out' : near(S.markIn) ? 'in' : null;
   }
   ww.addEventListener('pointerdown', (e) => {
-    if (S.mode !== 'replay' || !S.peaks || e.button > 0) return;
-    drag = { x: e.clientX, vs: S.viewStart, moved: false, pan: e.shiftKey, marker: e.shiftKey ? null : markerAt(e) };
+    if (S.mode !== 'replay' || !S.peaks || (e.button !== 0 && e.button !== 1)) return;
+    const mid = e.button === 1;
+    if (mid) { e.preventDefault(); ww.classList.add('panning'); }
+    const pan = mid || e.shiftKey;
+    drag = { x: e.clientX, vs: S.viewStart, moved: false, pan, mid, marker: pan ? null : markerAt(e) };
     ww.setPointerCapture(e.pointerId);
   });
   ww.addEventListener('pointermove', (e) => {
@@ -847,7 +859,9 @@
   const waveUp = (e) => {
     if (!drag) return;
     ww.classList.remove('dragging', 'panning');
-    if (!drag.moved) {               // plain click = seek
+    if (drag.mid) {                  // middle-button pan never seeks
+      if (drag.moved) S.lastPan = Date.now();
+    } else if (!drag.moved) {        // plain click = seek
       S.clipStopAt = null;
       audio.currentTime = waveTimeAt(e);
       S.follow = true;
@@ -858,6 +872,8 @@
     drag = null;
   };
   ww.addEventListener('pointerup', waveUp);
+  ww.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); });
+  ww.addEventListener('auxclick', (e) => { if (e.button === 1) e.preventDefault(); });
   ww.addEventListener('pointercancel', waveUp);
   const zoomBtn = (f) => {          // buttons/keys zoom around the playhead and keep following it
     const len = waveDur() / S.zoom, rel = (audio.currentTime - S.viewStart) / len;
