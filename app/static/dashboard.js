@@ -311,8 +311,11 @@
     loadChunk(hit.i, hit.offset, true);
   }
 
-  async function loadChunk(i, offset, autoplay) {
+  // keepView: hold the waveform still while the playhead crosses into another chunk
+  async function loadChunk(i, offset, autoplay, keepView) {
     const c = S.day.chunks[i];
+    const prev = S.mode === 'replay' && S.day.chunks[S.chunkIdx];
+    const absView = prev ? prev.start + S.viewStart : null;
     S.mode = 'replay'; S.chunkIdx = i; S.pendingSeek = offset;
     $('stMode').textContent = 'Replay'; $('stMode').className = 'pill';
     setLiveBtn(false);
@@ -320,16 +323,50 @@
     audio.src = url + (c.in_progress ? `?t=${Date.now()}` : '');
     $('dl').href = url + '?download=1'; $('dl').hidden = false;
     $('waveLabel').textContent = `${S.date}  ${fmtTime(c.start)} – ${fmtTime(c.start + chunkLen(c))}${c.in_progress ? '  (recording)' : ''}`;
-    S.peaks = null; $('waveMsg').textContent = 'Drawing waveform…'; $('waveMsg').hidden = false;
-    S.follow = true; S.viewStart = Math.max(0, offset - (chunkLen(c) / S.zoom) * 0.1);
+    S.peaks = chunkPeaks(c);
+    [S.day.chunks[i - 1], S.day.chunks[i + 1]].forEach((n) => n && chunkPeaks(n));   // ready before you drag into them
+    if (keepView && absView != null) S.viewStart = absView - c.start;
+    else {
+      if (!S.peaks) { $('waveMsg').textContent = 'Drawing waveform…'; $('waveMsg').hidden = false; }
+      S.follow = true; S.viewStart = Math.max(0, offset - (chunkLen(c) / S.zoom) * 0.1);
+    }
     setWaveZoomEnabled(true);
     if (autoplay) ensureAudioGraph();
     audio.load();
     if (autoplay) audio.play().catch(() => {});
-    try {
-      const p = await api(`/api/streams/${S.stream.id}/peaks/${S.date}/${c.file}`);
-      if (S.chunkIdx === i && S.mode === 'replay') { S.peaks = p; $('waveMsg').hidden = true; }
-    } catch (e) { $('waveMsg').textContent = 'Waveform unavailable'; }
+    if (S.peaks) { $('waveMsg').hidden = true; return; }
+    const p = await fetchPeaks(c);
+    if (S.chunkIdx !== i || S.mode !== 'replay') return;
+    if (p) { S.peaks = p; $('waveMsg').hidden = true; } else $('waveMsg').textContent = 'Waveform unavailable';
+  }
+
+  // ---- waveform peaks for any chunk, cached so neighbours can be drawn around the current one ----
+  const peakCache = new Map();
+  const peakKey = (c) => `${S.stream.id}|${S.date}|${c.file}|${c.in_progress ? Math.floor(c.duration / 10) : ''}`;
+  function chunkPeaks(c) {            // cached peaks or null (and starts fetching them)
+    const v = peakCache.get(peakKey(c));
+    if (v === undefined) fetchPeaks(c);
+    return v && v !== 'loading' && v !== 'error' ? v : null;
+  }
+  async function fetchPeaks(c) {
+    const k = peakKey(c), v = peakCache.get(k);
+    if (v && v !== 'loading') return v === 'error' ? null : v;
+    if (v === 'loading') return peakCache.get(k + '#p');
+    const pr = api(`/api/streams/${S.stream.id}/peaks/${S.date}/${c.file}`).then((p) => {
+      peakCache.set(k, p); return p;
+    }).catch(() => { peakCache.set(k, 'error'); return null; }).finally(() => peakCache.delete(k + '#p'));
+    peakCache.set(k, 'loading'); peakCache.set(k + '#p', pr);
+    if (peakCache.size > 400) peakCache.delete(peakCache.keys().next().value);   // drop the oldest
+    return pr;
+  }
+  // chunk whose audio covers ts (prefers the one playing); null in a gap
+  function chunkAt(ts) {
+    const cs = S.day.chunks, cur = cs[S.chunkIdx];
+    if (cur && ts >= cur.start && ts < cur.start + chunkLen(cur)) return { i: S.chunkIdx, offset: ts - cur.start };
+    let lo = 0, hi = cs.length - 1, k = -1;
+    while (lo <= hi) { const m = (lo + hi) >> 1; if (cs[m].start <= ts) { k = m; lo = m + 1; } else hi = m - 1; }
+    for (let j = k; j >= 0 && j >= k - 2; j--) if (ts < cs[j].start + chunkLen(cs[j])) return { i: j, offset: ts - cs[j].start };
+    return null;
   }
 
   audio.addEventListener('loadedmetadata', () => {
@@ -348,7 +385,7 @@
     // after a recorder restart the next chunk can begin with audio we just heard: skip it
     if (next >= 0) {
       const n = S.day.chunks[next];
-      return loadChunk(next, Math.min(Math.max(0, endTs - n.start), Math.max(0, chunkLen(n) - 1)), true);
+      return loadChunk(next, Math.min(Math.max(0, endTs - n.start), Math.max(0, chunkLen(n) - 1)), true, true);
     }
     if (cur.in_progress) return loadChunk(S.chunkIdx, endTs - cur.start, true); // file grew, continue
     if (S.date < today()) {
@@ -528,8 +565,9 @@
       S.levels.forEach((v, i) => { const bh = Math.max(1, v * (h - 20)); g.fillRect(w - (S.levels.length - i) * 3, mid - bh / 2, 2, bh); });
       return;
     }
-    if (S.mode !== 'replay' || !S.peaks) return;
-    const pk = S.peaks.peaks, pps = S.peaks.per_second, dur = waveDur();
+    const c = S.mode === 'replay' && S.day && S.day.chunks[S.chunkIdx];
+    if (!c) return;
+    const dur = waveDur();
     const ct = audio.currentTime || 0;
     // keep the playhead in view while playing, unless the user panned recently
     if (!S.follow && Date.now() - S.lastPan > 4000) S.follow = true;
@@ -537,16 +575,21 @@
     if (S.follow && !audio.paused && (ct < S.viewStart || ct > S.viewStart + len * 0.92)) S.viewStart = ct - len * 0.08;
     clampView();
     const vs = S.viewStart, ve = vs + len;
+    // one continuous strip: each bar takes its level from whichever chunk covers that moment
     const bw = S.zoom >= 8 ? 3 : 2, gap = 1, n = Math.floor(w / (bw + gap));
     for (let i = 0; i < n; i++) {
       const t0 = vs + (i / n) * len, t1 = vs + ((i + 1) / n) * len;
-      const a = Math.floor(t0 * pps), b = Math.max(a + 1, Math.floor(t1 * pps));
+      const hit = chunkAt(c.start + (t0 + t1) / 2);
+      if (!hit) continue;                                 // nothing recorded here
+      const hc = S.day.chunks[hit.i], p = hit.i === S.chunkIdx && S.peaks ? S.peaks : chunkPeaks(hc);
+      if (!p) continue;
+      const pk = p.peaks, pps = p.per_second, base = c.start - hc.start;
+      const a = Math.max(0, Math.floor((t0 + base) * pps)), b = Math.max(a + 1, Math.floor((t1 + base) * pps));
       let v = 0; for (let j = a; j < b && j < pk.length; j++) v = Math.max(v, pk[j]);
       const bh = Math.max(1, Math.sqrt(v) * (h - 44));
       g.fillStyle = t0 <= ct ? grad : '#3a4a80';
       g.fillRect(i * (bw + gap), mid - bh / 2, bw, bh);
     }
-    const c = S.day.chunks[S.chunkIdx];
     const xOf = (t) => ((t - vs) / len) * w;
     // time ruler in station time
     if (c) {
@@ -603,12 +646,21 @@
 
   function waveDur() {
     if (S.peaks && S.peaks.peaks.length) return S.peaks.peaks.length / S.peaks.per_second;
+    const c = S.day && S.day.chunks[S.chunkIdx];
+    if (c && chunkLen(c)) return chunkLen(c);
     return isFinite(audio.duration) ? audio.duration : 1;
   }
   function maxZoom() { return Math.max(1, waveDur() / 5); } // deepest view is 5 seconds
+  // the view can run on into neighbouring chunks, as far as the day's recordings go
   function clampView() {
-    const len = waveDur() / S.zoom;
-    S.viewStart = Math.min(Math.max(0, S.viewStart), Math.max(0, waveDur() - len));
+    const len = waveDur() / S.zoom, c = S.day && S.day.chunks[S.chunkIdx];
+    let lo = 0, hi = Math.max(0, waveDur() - len);
+    if (c) {
+      const cs = S.day.chunks, last = cs[cs.length - 1];
+      lo = Math.min(lo, cs[0].start - c.start);
+      hi = Math.max(hi, last.start + chunkLen(last) - c.start - len);
+    }
+    S.viewStart = Math.min(Math.max(lo, S.viewStart), hi);
   }
   function setZoom(z, anchorFrac = 0.5) {
     if (S.mode !== 'replay') return;
@@ -712,12 +764,14 @@
     if (audio.paused) { ensureAudioGraph(); audio.play().catch(() => {}); }  // audible while dragging
   }
   // timeline scrub: may cross chunk boundaries, so loads are throttled with a trailing call
+  // wave scrubs hold the waveform still and go silent over gaps; timeline scrubs jump to the next chunk
   function scrubTimelineTo(ts, final) {
     scrub.ts = ts;
-    const hit = findChunk(ts);
+    const wave = scrub.src !== 'tl';
+    const hit = wave ? chunkAt(ts) : findChunk(ts);
     if (!hit) return;
     if (S.mode === 'replay' && hit.i === S.chunkIdx) {
-      seekInChunk(hit.offset, final); keepWaveInView(hit.offset);
+      seekInChunk(hit.offset, final); if (!wave) keepWaveInView(hit.offset);
       return;
     }
     clearTimeout(scrub.timer);
@@ -725,7 +779,7 @@
     if (final || wait <= 0) {
       scrub.lastLoad = Date.now();
       if (S.mode === 'live') stopPlayback();
-      loadChunk(hit.i, hit.offset, true);
+      loadChunk(hit.i, hit.offset, true, wave);
     } else {
       scrub.timer = setTimeout(() => scrub && scrubTimelineTo(scrub.ts, false), wait);
     }
@@ -809,7 +863,7 @@
   const ww = $('waveWrap');
   const fracOf = (e) => { const r = ww.getBoundingClientRect(); return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)); };
   ww.addEventListener('wheel', (e) => {
-    if (S.mode !== 'replay' || !S.peaks) return;
+    if (S.mode !== 'replay') return;
     e.preventDefault();
     if (Math.abs(e.deltaX) > Math.abs(e.deltaY) || e.shiftKey) {        // pan
       const d = e.shiftKey ? e.deltaY : e.deltaX;
@@ -821,7 +875,9 @@
     }
   }, { passive: false });
   let drag = null;
-  const waveTimeAt = (e) => Math.min(waveDur(), S.viewStart + fracOf(e) * (waveDur() / S.zoom));
+  const curChunk = () => S.day.chunks[S.chunkIdx];
+  const waveTimeAt = (e) => S.viewStart + fracOf(e) * (waveDur() / S.zoom);   // relative to the playing chunk
+  const waveTsAt = (e) => curChunk().start + waveTimeAt(e);                  // absolute: may be in a neighbour
   // which clip marker (if any) is under the pointer on the waveform
   function markerAt(e) {
     const c = S.day && S.day.chunks[S.chunkIdx]; if (!c) return null;
@@ -829,49 +885,70 @@
     const near = (ts) => ts != null && Math.abs(((ts - c.start - S.viewStart) / len) * r.width - (e.clientX - r.left)) <= 6;
     return near(S.markOut) ? 'out' : near(S.markIn) ? 'in' : null;
   }
+  // seek to any moment shown on the waveform, loading the neighbouring chunk if needed
+  function seekWaveTo(ts) {
+    const hit = chunkAt(ts);
+    if (!hit) return toast('Nothing recorded at that moment');
+    if (hit.i === S.chunkIdx) audio.currentTime = hit.offset;
+    else loadChunk(hit.i, hit.offset, !audio.paused, true);
+  }
   ww.addEventListener('pointerdown', (e) => {
-    if (S.mode !== 'replay' || !S.peaks || (e.button !== 0 && e.button !== 1)) return;
+    if (S.mode !== 'replay' || !curChunk() || (e.button !== 0 && e.button !== 1)) return;
     const mid = e.button === 1;
-    if (mid) { e.preventDefault(); ww.classList.add('panning'); }
-    const pan = mid || e.shiftKey;
-    drag = { x: e.clientX, vs: S.viewStart, moved: false, pan, mid, marker: pan ? null : markerAt(e) };
+    if (mid) e.preventDefault();
+    const c = curChunk();
+    drag = {
+      x: e.clientX, vs: S.viewStart, moved: false, mid, pan: !mid && e.shiftKey,
+      marker: mid || e.shiftKey ? null : markerAt(e),
+      // middle button grabs the strip: the playhead stays put and time slides under it
+      absView: c.start + S.viewStart, ts0: c.start + (audio.currentTime || 0),
+      spp: (waveDur() / S.zoom) / ww.clientWidth,
+    };
+    if (mid) ww.classList.add('panning');
     ww.setPointerCapture(e.pointerId);
   });
   ww.addEventListener('pointermove', (e) => {
     if (!drag) { ww.classList.toggle('on-marker', S.mode === 'replay' && !!markerAt(e)); return; }
     if (drag.marker) {                                  // drag an in/out flag to adjust it
-      const c = S.day.chunks[S.chunkIdx]; drag.moved = true;
-      setMark(drag.marker, c.start + waveTimeAt(e), true);
+      drag.moved = true;
+      setMark(drag.marker, waveTsAt(e), true);
       return;
     }
     const dx = e.clientX - drag.x;
     if (!drag.moved && Math.abs(dx) > 4) {
       drag.moved = true;
-      if (!drag.pan) scrubStart('wave');
+      if (!drag.pan) scrubStart(drag.mid ? 'grab' : 'wave');
     }
     if (!drag.moved) return;
     S.follow = false; S.lastPan = Date.now();
-    if (drag.pan) {                                     // Shift+drag = pan the zoomed waveform
-      if (S.zoom > 1) {
-        ww.classList.add('panning');
-        S.viewStart = drag.vs - (dx / ww.clientWidth) * (waveDur() / S.zoom); clampView();
-      }
+    if (drag.mid) {                                     // middle-drag = grab and move through time
+      const dt = dx * drag.spp;
+      scrubTimelineTo(drag.ts0 - dt, false);
+      S.viewStart = drag.absView - dt - curChunk().start; clampView();
       return;
     }
-    ww.classList.add('dragging');                       // drag = scrub
-    seekInChunk(waveTimeAt(e), false);
+    if (drag.pan) {                                     // Shift+drag = pan the view only
+      ww.classList.add('panning');
+      S.viewStart = drag.vs - (dx / ww.clientWidth) * (waveDur() / S.zoom); clampView();
+      return;
+    }
+    ww.classList.add('dragging');                       // drag = scrub under the pointer
+    scrubTimelineTo(waveTsAt(e), false);
   });
   const waveUp = (e) => {
     if (!drag) return;
     ww.classList.remove('dragging', 'panning');
-    if (drag.mid) {                  // middle-button pan never seeks
+    if (drag.mid) {
+      if (scrub) { scrubTimelineTo(drag.ts0 - (e.clientX - drag.x) * drag.spp, true); scrubEnd(); }
+      S.lastPan = Date.now();
+    } else if (drag.pan) {
       if (drag.moved) S.lastPan = Date.now();
     } else if (!drag.moved) {        // plain click = seek
       S.clipStopAt = null;
-      audio.currentTime = waveTimeAt(e);
+      seekWaveTo(waveTsAt(e));
       S.follow = true;
     } else if (scrub) {
-      seekInChunk(waveTimeAt(e), true);
+      scrubTimelineTo(waveTsAt(e), true);
       scrubEnd(); S.follow = true; S.lastPan = 0;
     }
     drag = null;
