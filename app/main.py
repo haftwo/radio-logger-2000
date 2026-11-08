@@ -255,7 +255,7 @@ def stream_day(stream_id: int, date: str, user=Depends(auth.require_user)):
     end = dt.datetime.combine(day + dt.timedelta(days=1), dt.time()).timestamp()
     return {
         "date": date, "day_start": start, "day_end": end, "now": time.time(),
-        "chunks": audio.list_day(s["slug"], day),
+        "chunks": audio.list_day(s["slug"], day, audio.is_hls(s["url"])),
         "tracks": db.tracks_between(stream_id, start, end),
     }
 
@@ -346,7 +346,7 @@ async def clip(stream_id: int, start: float, end: float, user=Depends(auth.requi
         raise HTTPException(400, "The out point must be after the in point")
     if end - start > audio.CLIP_MAX_SECONDS:
         raise HTTPException(400, f"Clips are limited to {audio.CLIP_MAX_SECONDS // 3600} hours")
-    parts = audio.clip_parts(s["slug"], start, end)
+    parts = audio.clip_parts(s["slug"], start, end, audio.is_hls(s["url"]))
     if not parts:
         raise HTTPException(404, "Nothing recorded in that range")
     if _clip_slots.locked():

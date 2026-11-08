@@ -80,6 +80,7 @@ class StreamWorker:
         while True:
             try:
                 audio.ensure_day_dirs(self.stream["slug"])
+                audio.note_run_start(self.stream["slug"])
                 self.silence_since = None
                 self.proc = await asyncio.create_subprocess_exec(
                     *self._cmd(), stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)

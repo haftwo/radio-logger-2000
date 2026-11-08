@@ -61,7 +61,91 @@ def duration(path: str) -> float:
         return 0.0
 
 
-def list_day(slug: str, day: dt.date) -> list[dict]:
+def is_hls(url: str) -> bool:
+    return ".m3u8" in (url or "").lower()
+
+
+# ---- recorder runs --------------------------------------------------------------------
+# Each ffmpeg launch is logged so the day listing knows where one continuous recording
+# ends and the next begins (a restart re-fetches buffered HLS audio, so its first chunk
+# overlaps the previous run).
+
+def _runs_path(slug: str) -> str:
+    return os.path.join(stream_dir(slug), "runs.log")
+
+
+def note_run_start(slug: str, ts: float | None = None) -> None:
+    try:
+        os.makedirs(stream_dir(slug), exist_ok=True)
+        with open(_runs_path(slug), "a") as f:
+            f.write(f"{ts or time.time():.3f}\n")
+    except OSError:
+        pass
+
+
+def run_starts(slug: str) -> list[float]:
+    try:
+        with open(_runs_path(slug)) as f:
+            return sorted(float(x) for x in f.read().split() if x.strip())
+    except (OSError, ValueError):
+        return []
+
+
+def prune_runs(slug: str, cutoff: float) -> None:
+    runs = run_starts(slug)
+    keep = [r for r in runs if r >= cutoff]
+    if len(keep) == len(runs):
+        return
+    try:
+        with open(_runs_path(slug), "w") as f:
+            f.writelines(f"{r:.3f}\n" for r in keep)
+    except OSError:
+        pass
+
+
+# File names record the wall clock when ffmpeg opened each chunk. With HLS the audio arrives
+# in segment-sized bursts, so that moment can land several seconds either side of where the
+# audio really belongs, and a restart's first chunk also carries ~30 s of buffered audio from
+# before its name. Within one continuous run the audio has no holes, so chunks are placed end
+# to end from their real lengths, and the run as a whole is anchored to its file names.
+HLS_SLACK = 15.0   # largest name jitter treated as the same continuous recording (HLS)
+ICY_SLACK = 2.0    # Icecast/HTTP names are accurate; a bigger hole is real lost audio
+
+
+def place_chunks(chunks: list[dict], runs: list[float], slack: float) -> list[dict]:
+    """Set each chunk's "start" to where its audio really sits; "named" keeps the file time."""
+    groups: list[list[dict]] = []
+    for c in chunks:
+        c["named"] = c["start"]
+    prev = None
+    for i, c in enumerate(chunks):
+        nxt = chunks[i + 1] if i + 1 < len(chunks) else None
+        # a run starts at a logged ffmpeg launch, or (older recordings) at a chunk whose buffered
+        # audio runs well past the next chunk's start
+        restarted = prev is not None and (
+            any(prev["named"] < r <= c["named"] + 1 for r in runs)
+            or (nxt is not None and c["named"] + (c["duration"] or 0) - nxt["named"] > slack))
+        hole = prev is not None and c["named"] - (prev["named"] + prev["duration"]) > slack
+        if prev is None or restarted or hole:
+            groups.append([c])
+        else:
+            groups[-1].append(c)
+        prev = c
+    for g in groups:
+        pos, offs = 0.0, []
+        for c in g:
+            c["_pos"] = pos
+            offs.append(c["named"] - g[0]["named"] - pos)
+            pos += c["duration"] or 0
+        # the first chunk's name is skewed by buffered audio, so anchor on the rest
+        offs = sorted(offs[1:]) if len(offs) > 1 else offs
+        shift = offs[len(offs) // 2]
+        for c in g:
+            c["start"] = round(g[0]["named"] + shift + c.pop("_pos"), 3)
+    return chunks
+
+
+def list_day(slug: str, day: dt.date, hls: bool = False) -> list[dict]:
     d = day_dir(slug, day)
     if not os.path.isdir(d):
         return []
@@ -80,7 +164,7 @@ def list_day(slug: str, day: dt.date) -> list[dict]:
             "size": st.st_size,
             "in_progress": in_progress,
         })
-    return out
+    return place_chunks(out, run_starts(slug), HLS_SLACK if hls else ICY_SLACK)
 
 
 def available_days(slug: str) -> list[str]:
@@ -174,6 +258,9 @@ def apply_retention() -> int:
                     os.rmdir(dirpath)
             except (OSError, ValueError):
                 pass
+    for slug in os.listdir(base):
+        if os.path.isdir(os.path.join(base, slug)):
+            prune_runs(slug, cutoff)
     db.ex("DELETE FROM tracks WHERE ts < ?", (cutoff,))
     try:
         from . import transcribe
@@ -202,20 +289,26 @@ def disk_usage() -> dict:
 CLIP_MAX_SECONDS = 4 * 3600  # longest clip a user can cut in one go
 
 
-def clip_parts(slug: str, start: float, end: float) -> list[tuple[str, float, float]]:
+def clip_parts(slug: str, start: float, end: float, hls: bool = False) -> list[tuple[str, float, float]]:
     """Chunks covering [start, end) as (path, inpoint, outpoint) in seconds within each file."""
-    parts = []
+    found = []
     day = dt.date.fromtimestamp(start) - dt.timedelta(days=1)  # a chunk can begin before midnight
     last = dt.date.fromtimestamp(end)
     while day <= last:
-        for c in list_day(slug, day):
+        for c in list_day(slug, day, hls):
             c0, c1 = c["start"], c["start"] + (c["duration"] or 0)
             if c1 <= start or c0 >= end or c1 <= c0:
                 continue
-            parts.append((os.path.join(day_dir(slug, day), c["file"]),
-                          max(0.0, start - c0), min(c1, end) - c0))
+            found.append((c0, c1, os.path.join(day_dir(slug, day), c["file"])))
         day += dt.timedelta(days=1)
-    parts.sort(key=lambda p: p[0])
+    found.sort()
+    # after a restart the first chunk repeats audio the previous run already has: skip it
+    parts, done = [], start
+    for c0, c1, path in found:
+        a, b = max(done, c0), min(c1, end)
+        if b - a > 0.05:
+            parts.append((path, a - c0, b - c0))
+            done = b
     return parts
 
 

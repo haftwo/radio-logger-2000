@@ -53,7 +53,8 @@
   }
   const chipsHtml = (t, withSrc) => (t.tags || []).map((g) => `<span class="chip ${/^\d{4}$/.test(g) ? 'year' : ''}">${esc(g)}</span>`).join('')
     + (withSrc && t.source && t.source !== 'icy' && t.source !== 'shazam' ? `<span class="chip src">${esc(t.source.split(':')[0])}</span>` : '');
-  const chunkLen = (c) => c.in_progress ? Math.max(c.duration, S.day.now - c.start) : c.duration;
+  // chunk "start" is where its audio really sits; "named" is the file time ffmpeg opened it at
+  const chunkLen = (c) => c.in_progress ? Math.max(c.duration, S.day.now - (c.named ?? c.start)) : c.duration;
 
   // ---------- boot ----------
   async function boot() {
@@ -344,7 +345,11 @@
     const endTs = cur.start + audio.currentTime;
     if (cur.in_progress || S.date === today()) await loadDay(S.date, true);
     const next = S.day.chunks.findIndex((c) => c.start > cur.start);
-    if (next >= 0) return loadChunk(next, 0, true);
+    // after a recorder restart the next chunk can begin with audio we just heard: skip it
+    if (next >= 0) {
+      const n = S.day.chunks[next];
+      return loadChunk(next, Math.min(Math.max(0, endTs - n.start), Math.max(0, chunkLen(n) - 1)), true);
+    }
     if (cur.in_progress) return loadChunk(S.chunkIdx, endTs - cur.start, true); // file grew, continue
     if (S.date < today()) {
       await loadDay(shiftDate(S.date, 1));
