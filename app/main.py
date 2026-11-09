@@ -146,6 +146,18 @@ def login(request: Request, username: str = Form(...), password: str = Form(...)
     return RedirectResponse("/", 303)
 
 
+@app.post("/login/guest")
+def login_guest(request: Request):
+    """One-click public sign-in. Works only while an admin has public guest access switched on."""
+    g = auth.guest_account()
+    if not g:
+        return RedirectResponse("/login?error=guest_off", 303)
+    request.session.clear()
+    request.session["uid"] = g["id"]
+    db.ex("UPDATE users SET last_login=? WHERE id=?", (int(time.time()), g["id"]))
+    return RedirectResponse("/", 303)
+
+
 # ---- Microsoft Entra ID single sign-on ---------------------------------------------
 
 @app.get("/auth/config")
@@ -153,7 +165,8 @@ def auth_config():
     """Public: tells the login page which sign-in options to show."""
     c = sso.config()
     return {"sso": sso.enabled(), "label": c["sso_button_label"] or "Sign in with Microsoft",
-            "password_login": "admins" if sso.enabled() and c["sso_password_login"] == "admins" else "all"}
+            "password_login": "admins" if sso.enabled() and c["sso_password_login"] == "admins" else "all",
+            "guest": auth.guest_account() is not None}
 
 
 @app.get("/auth/login")
@@ -379,15 +392,25 @@ async def chunk_peaks(stream_id: int, date: str, name: str, user=Depends(auth.re
     return JSONResponse(await audio.compute_peaks(p, cache=complete))
 
 
+_guest_live: set = set()   # ffmpeg processes serving guests; capped so the public can't overload the server
+
+
 @app.get("/api/streams/{stream_id}/live")
 async def live(stream_id: int, request: Request, user=Depends(auth.require_user)):
     """Re-encode the source to MP3 so any stream type (Icecast, HLS, AAC) plays in any browser,
     and so an http:// stream still plays when this site is served over https."""
     s = get_stream_or_404(stream_id)
+    is_guest = user["role"] == "guest"
+    if is_guest:
+        _guest_live.difference_update({p for p in _guest_live if p.returncode is not None})
+        if len(_guest_live) >= db.setting_int("guest_live_limit"):
+            raise HTTPException(429, "Too many guests are listening live right now. Try again shortly, or replay a recording.")
     proc = await asyncio.create_subprocess_exec(
         "ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error", "-i", s["url"], "-vn",
         "-map", "0:a:0", "-c:a", "libmp3lame", "-b:a", "128k", "-f", "mp3", "pipe:1",
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+    if is_guest:
+        _guest_live.add(proc)
 
     async def gen():
         try:
@@ -400,6 +423,7 @@ async def live(stream_id: int, request: Request, user=Depends(auth.require_user)
             if proc.returncode is None:
                 proc.kill()
                 await proc.wait()
+            _guest_live.discard(proc)
 
     return StreamingResponse(gen(), media_type="audio/mpeg",
                              headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
@@ -437,7 +461,7 @@ class StreamIn(BaseModel):
 class UserIn(BaseModel):
     username: str = Field(min_length=2, max_length=40)
     password: str | None = None
-    role: str = Field(default="viewer", pattern="^(admin|viewer)$")
+    role: str = Field(default="viewer", pattern="^(admin|viewer|guest)$")
 
 
 @app.get("/api/admin/settings")
@@ -607,6 +631,33 @@ def clear_sso_secret(user=Depends(auth.require_admin)):
     return {"ok": True}
 
 
+class GuestIn(BaseModel):
+    enabled: bool
+    live_limit: int = Field(default=3, ge=0, le=50)
+
+
+@app.get("/api/admin/guest")
+def get_guest(user=Depends(auth.require_admin)):
+    g = db.q1("SELECT last_login FROM users WHERE auth='guest'")
+    return {"enabled": g is not None, "last_login": g["last_login"] if g else None,
+            "live_limit": db.setting_int("guest_live_limit"),
+            "live_now": sum(1 for p in _guest_live if p.returncode is None)}
+
+
+@app.put("/api/admin/guest")
+def put_guest(body: GuestIn, user=Depends(auth.require_admin)):
+    db.set_setting("guest_live_limit", body.live_limit)
+    if body.enabled and not auth.guest_account():
+        name, n = "guest", 2
+        while db.q1("SELECT 1 FROM users WHERE lower(username)=lower(?)", (name,)):
+            name, n = f"guest-{n}", n + 1
+        db.ex("INSERT INTO users(username, password_hash, role, created_at, auth, display_name) "
+              "VALUES (?,?,?,?,?,?)", (name, "", "guest", int(time.time()), "guest", "Public guest"))
+    elif not body.enabled:
+        db.ex("DELETE FROM users WHERE auth='guest'")   # also signs out everyone using it
+    return {"ok": True}
+
+
 @app.get("/api/admin/users")
 def list_users(user=Depends(auth.require_admin)):
     return db.q("SELECT id, username, role, created_at, auth, display_name, email, last_login "
@@ -646,6 +697,8 @@ def update_user(uid: int, body: UserIn, user=Depends(auth.require_admin)):
         raise HTTPException(400, "There must be at least one admin")
     if body.role != "admin" and is_last_breakglass(target):
         raise HTTPException(400, "This is the last local admin (your break-glass login while SSO is on)")
+    if target["auth"] == "guest":
+        raise HTTPException(400, "The public guest account is managed by the Public guest access switch")
     if target["auth"] == "sso":
         if body.password:
             raise HTTPException(400, "Microsoft accounts sign in with SSO and can't have a password")
@@ -677,7 +730,7 @@ def delete_user(uid: int, user=Depends(auth.require_admin)):
     return {"ok": True}
 
 
-# ---- song tags (any signed-in user can correct or add them) ------------------------
+# ---- song tags (admins and viewers can correct or add them; guests are read-only) ------------------------
 
 class TrackIn(BaseModel):
     artist: str = Field(default="", max_length=200)
@@ -689,7 +742,7 @@ class TrackIn(BaseModel):
 
 
 @app.post("/api/streams/{stream_id}/tracks")
-async def add_track(stream_id: int, body: TrackIn, user=Depends(auth.require_user)):
+async def add_track(stream_id: int, body: TrackIn, user=Depends(auth.require_editor)):
     get_stream_or_404(stream_id)
     if body.ts is None:
         raise HTTPException(400, "ts required")
@@ -706,7 +759,7 @@ async def add_track(stream_id: int, body: TrackIn, user=Depends(auth.require_use
 
 
 @app.put("/api/tracks/{track_id}")
-async def edit_track(track_id: int, body: TrackIn, user=Depends(auth.require_user)):
+async def edit_track(track_id: int, body: TrackIn, user=Depends(auth.require_editor)):
     t = db.q1("SELECT * FROM tracks WHERE id=?", (track_id,))
     if not t:
         raise HTTPException(404)
@@ -725,7 +778,7 @@ async def edit_track(track_id: int, body: TrackIn, user=Depends(auth.require_use
 
 
 @app.delete("/api/tracks/{track_id}")
-def delete_track(track_id: int, user=Depends(auth.require_user)):
+def delete_track(track_id: int, user=Depends(auth.require_editor)):
     db.ex("DELETE FROM tracks WHERE id=?", (track_id,))
     return {"ok": True}
 

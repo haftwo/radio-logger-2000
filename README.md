@@ -15,7 +15,7 @@ Records internet radio streams to disk in clock-aligned chunks and gives you a w
 - **Admin** (admin role only)
   - *Streams*: add/edit/delete, enable/disable, restart a recorder, upload a station logo (click the logo), see the recorder log.
   - *Recording*: recordings folder, how long to keep audio, chunk size (1–60 min), MP3 bitrate, Shazam interval, and disk usage.
-  - *Users*: add/edit/delete users, reset passwords, Admin vs Viewer roles.
+  - *Users*: add/edit/delete users, reset passwords, Admin / Viewer / Guest roles, and **Public guest access** (see below).
   - *Alarms*: outage threshold and silence level, and email alarms over SMTP (who to email, how long before alerting, recovery emails, test email).
 
 ## How it works
@@ -95,6 +95,12 @@ Users are created on first sign-in and their role is re-synced from Entra on eve
 local admin as break-glass. The app won't let you remove the last one. Settings can be pre-seeded
 with `RL_SSO_TENANT_ID`, `RL_SSO_CLIENT_ID`, `RL_SSO_CLIENT_SECRET`, `RL_SSO_ADMIN_GROUP`,
 `RL_PUBLIC_URL` and `RL_SSO_ENABLED=true`.
+
+### Public guest access
+
+Admin → Users → **Public guest access** puts a *Continue as guest* button on the sign-in page. Guests need no password and get read-only access: replay, live listening, song history, charts, transcripts, outages and downloads, but not Admin and not song-tag edits. Live listening for guests is capped (default 3 at once) because each listener runs its own ffmpeg. Switching guest access off signs every guest out immediately.
+
+You can also create a password-protected shared account with the **Guest** role under Admin → Users if you'd rather hand out a login.
 
 ## Updating
 

@@ -170,10 +170,10 @@
       <tr>
         <td><strong>${esc(u.display_name && u.auth === 'sso' ? u.display_name : u.username)}</strong>${me && me.id === u.id ? ' <span class="pill">you</span>' : ''}
             ${u.auth === 'sso' ? `<div class="hint">${esc(u.email || u.username)}</div>` : ''}</td>
-        <td>${u.auth === 'sso' ? '<span class="badge-sso">Microsoft</span>' : '<span class="pill">Local</span>'}</td>
-        <td>${u.role === 'admin' ? 'Admin' : 'Viewer'}</td>
+        <td>${u.auth === 'sso' ? '<span class="badge-sso">Microsoft</span>' : u.auth === 'guest' ? '<span class="pill">Public, no password</span>' : '<span class="pill">Local</span>'}</td>
+        <td>${({ admin: 'Admin', guest: 'Guest' })[u.role] || 'Viewer'}</td>
         <td class="muted">${u.last_login ? new Date(u.last_login * 1000).toLocaleString() : 'never'}</td>
-        <td class="actions"><button class="btn" data-uedit="${u.id}">Edit</button>
+        <td class="actions">${u.auth === 'guest' ? '' : `<button class="btn" data-uedit="${u.id}">Edit</button>`}
           ${me && me.id === u.id ? '' : `<button class="btn danger" data-udel="${u.id}">Delete</button>`}</td>
       </tr>`).join('');
   }
@@ -183,7 +183,7 @@
     const u = users.find((x) => x.id === Number(t.dataset.udel));
     if (!confirm(`Delete user "${u.username}"?`)) return;
     await api(`/api/admin/users/${u.id}`, 'DELETE').then(() => toast('User deleted')).catch((er) => toast(er.message, true));
-    loadUsers();
+    loadUsers(); loadGuest();
   });
   function openUser(u) {
     editingUser = u || null;
@@ -208,6 +208,22 @@
       if (editingUser) await api(`/api/admin/users/${editingUser.id}`, 'PUT', body);
       else await api('/api/admin/users', 'POST', body);
       $('userDlg').close(); toast(editingUser && editingUser.auth === 'sso' ? 'Saved. Microsoft re-syncs the role at next sign-in' : 'User saved'); loadUsers();
+    } catch (er) { toast(er.message, true); }
+  });
+
+  // ---------- public guest access ----------
+  async function loadGuest() {
+    const g = await api('/api/admin/guest'), f = $('guestFormAdmin');
+    f.enabled.checked = g.enabled; f.live_limit.value = g.live_limit;
+    $('guestNow').textContent = g.enabled ? `Guests listening live now: ${g.live_now}.` : '';
+  }
+  $('guestFormAdmin').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    try {
+      await api('/api/admin/guest', 'PUT', { enabled: f.enabled.checked, live_limit: Number(f.live_limit.value) });
+      toast(f.enabled.checked ? 'Guest access is on' : 'Guest access is off; guests signed out');
+      loadUsers(); loadGuest();
     } catch (er) { toast(er.message, true); }
   });
 
@@ -362,7 +378,7 @@
   (async () => {
     me = await api('/api/me');
     $('who').textContent = me.username;
-    await loadStreams(); await loadUsers();
+    await loadStreams(); await loadUsers(); loadGuest();
     setInterval(() => { if ($('tab-streams').classList.contains('active') && !$('streamDlg').open) loadStreams(); }, 10000);
   })().catch((e) => toast(e.message, true));
 })();

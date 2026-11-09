@@ -14,6 +14,7 @@ DEFAULT_SETTINGS = {
     "chunk_minutes": "15",
     "bitrate_kbps": "128",
     "shazam_interval": "60",
+    "guest_live_limit": "3",
 }
 
 _lock = threading.RLock()

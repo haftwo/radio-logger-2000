@@ -62,6 +62,19 @@ def require_user(request: Request) -> dict:
     return user
 
 
+def require_editor(request: Request) -> dict:
+    """Signed-in users who may change song history: admins and viewers, not guests."""
+    user = require_user(request)
+    if user["role"] == "guest":
+        raise HTTPException(403, "Guests have read-only access")
+    return user
+
+
+def guest_account() -> dict | None:
+    """The built-in public guest account; it exists only while public guest access is switched on."""
+    return db.q1("SELECT id, username, role FROM users WHERE auth='guest'")
+
+
 def require_admin(request: Request) -> dict:
     user = require_user(request)
     if user["role"] != "admin":

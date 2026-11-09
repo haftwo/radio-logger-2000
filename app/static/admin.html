@@ -96,8 +96,18 @@
         <thead><tr><th>User</th><th>Sign-in</th><th>Role</th><th>Last sign-in</th><th></th></tr></thead>
         <tbody id="userRows"></tbody>
       </table>
-      <p class="hint">Viewers can replay and listen live. Admins can also manage streams, settings and users. Microsoft accounts are created automatically on first sign-in when single sign-on is on.</p>
+      <p class="hint">Guests can replay, listen live and browse song history, transcripts and outages, but can't change anything. Viewers can also add and correct song tags. Admins can also manage streams, settings and users. Microsoft accounts are created automatically on first sign-in when single sign-on is on.</p>
     </div>
+    <form class="panel" id="guestFormAdmin" style="margin-top:16px">
+      <h2>Public guest access</h2>
+      <label class="check"><input type="checkbox" name="enabled"> Show a <b>Continue as guest</b> button on the sign-in page</label>
+      <div class="hint">Anyone who can reach the site gets in with no password, as a read-only Guest. They see everything except Admin. Switching this off signs every guest out straight away.</div>
+      <label class="field" style="margin-top:12px"><span>Live listeners allowed for guests at once</span>
+        <input type="number" name="live_limit" min="0" max="50" required>
+        <div class="hint">Each live listener runs its own ffmpeg on the server. 0 = guests can only replay recordings. <span id="guestNow"></span></div>
+      </label>
+      <button class="btn primary" type="submit">Save guest access</button>
+    </form>
   </section>
   <!-- outage detection and email alarms -->
   <section class="tab" id="tab-alarms">
@@ -333,7 +343,7 @@
     <h3 id="userDlgTitle">Add user</h3>
     <label class="field"><span>Username</span><input type="text" name="username" required maxlength="40" autocomplete="off"></label>
     <label class="field"><span id="pwLabel">Password</span><input type="password" name="password" autocomplete="new-password" minlength="8"></label>
-    <label class="field"><span>Role</span><select name="role"><option value="viewer">Viewer</option><option value="admin">Admin</option></select></label>
+    <label class="field"><span>Role</span><select name="role"><option value="viewer">Viewer</option><option value="guest">Guest (read-only)</option><option value="admin">Admin</option></select></label>
     <p class="hint" id="ssoUserNote" hidden>This person signs in with Microsoft. Their role is re-synced from Entra ID app roles/groups each time they sign in.</p>
     <div class="actions">
       <button class="btn" value="cancel" formnovalidate>Cancel</button>
