@@ -25,6 +25,11 @@
       <label class="field"><span>Password</span><input type="password" name="password" autocomplete="current-password" required></label>
       <button class="btn primary" style="width:100%" type="submit">Sign in</button>
     </form>
+    <form method="post" action="/login/guest" id="guestForm" hidden>
+      <div class="or"><span>or</span></div>
+      <button class="btn" style="width:100%" type="submit">Continue as guest</button>
+      <div class="hint" style="text-align:center;margin-top:6px">Listen and browse without an account.</div>
+    </form>
     <div class="ver login-ver" title="{{VERSION_TITLE}}">{{VERSION}}</div>
   </div>
 <script>
@@ -33,10 +38,12 @@
   const q = new URLSearchParams(location.search), err = $('err');
   const msg = q.get('sso_error') || ({ '1': 'Wrong username or password.',
     sso_only: 'Password sign-in is limited to local admins. Use Sign in with Microsoft.',
-    sso_off: 'Single sign-on is not set up yet.' })[q.get('error')];
+    sso_off: 'Single sign-on is not set up yet.',
+    guest_off: 'Guest access is switched off.' })[q.get('error')];
   if (msg) { err.textContent = msg; err.style.display = 'block'; }
   try {
     const c = await (await fetch('/auth/config')).json();
+    $('guestForm').hidden = !c.guest;
     if (!c.sso) return;
     $('ssoLabel').textContent = c.label;
     $('ssoBtn').hidden = false;

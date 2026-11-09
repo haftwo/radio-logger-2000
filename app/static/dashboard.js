@@ -63,6 +63,8 @@
     setupFormatters(S.tz);
     $('who').textContent = S.me.username;
     if (S.me.role === 'admin') { $('adminLink').hidden = false; $('noStreamsAdmin').hidden = false; }
+    S.readOnly = S.me.role === 'guest';
+    if (S.readOnly) { $('who').textContent = 'Guest'; $('tagHere').hidden = true; }
     S.streams = await api('/api/streams');
     if (!S.streams.length) { $('noStreams').hidden = false; return; }
     $('main').hidden = false;
@@ -215,7 +217,7 @@
          <div class="th" style="${t.artwork_url ? `background-image:url('${esc(t.artwork_url)}')` : ''}"></div>
          <div><div class="tt">${esc(t.title)}</div><div class="ta">${esc(t.artist)}${t.album ? ' · ' + esc(t.album) : ''}</div>
            <div class="chips">${chipsHtml(t, true)}</div></div>
-         <button class="btn sm edit" data-edit="${t.id}" title="Edit tags">Edit</button>
+         ${S.readOnly ? '' : `<button class="btn sm edit" data-edit="${t.id}" title="Edit tags">Edit</button>`}
        </div>`).join('');
     list.querySelectorAll('.trow').forEach((r) => r.addEventListener('click', (e) => {
       if (e.target.closest('[data-edit]')) return openTrack(S.day.tracks.find((t) => t.id === Number(r.dataset.id)));
@@ -418,7 +420,7 @@
     $('waveMsg').textContent = 'Connecting…'; $('waveMsg').hidden = false;
     ensureAudioGraph();
     audio.src = `/api/streams/${S.stream.id}/live?t=${Date.now()}`;
-    audio.play().then(() => ($('waveMsg').hidden = true)).catch((e) => { toast('Could not start the live stream', true); stopPlayback(); });
+    audio.play().then(() => ($('waveMsg').hidden = true)).catch((e) => { toast(S.readOnly ? 'Live listening is full for guests right now. Try again shortly, or replay a recording' : 'Could not start the live stream', true); stopPlayback(); });
     if (S.stream.is_music) refreshLiveTrack();
   }
 
